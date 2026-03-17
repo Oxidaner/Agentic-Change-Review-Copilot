@@ -1,0 +1,547 @@
+openapi: 3.0.3
+info:
+  title: Agentic Change Review Copilot API
+  version: 0.1.0
+  description: >
+    MVP API contract for change review creation, querying, human decision
+    submission, retry, timeline, export, and evaluation metrics.
+servers:
+  - url: https://api.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local
+tags:
+  - name: Reviews
+  - name: Evaluations
+paths:
+  /api/v1/reviews:
+    post:
+      tags: [Reviews]
+      summary: Create a review task
+      operationId: createReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequest'
+      responses:
+        '202':
+          description: Review accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateReviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/reviews/{review_id}:
+    get:
+      tags: [Reviews]
+      summary: Get review detail
+      operationId: getReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Review detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetReviewResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/reviews/{review_id}/timeline:
+    get:
+      tags: [Reviews]
+      summary: Get review timeline
+      operationId: getReviewTimeline
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Timeline events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/reviews/{review_id}/human-decision:
+    post:
+      tags: [Reviews]
+      summary: Submit a human review decision
+      operationId: submitHumanDecision
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HumanDecisionRequest'
+      responses:
+        '200':
+          description: Human decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanDecisionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/reviews/{review_id}/retry:
+    post:
+      tags: [Reviews]
+      summary: Retry a failed review task
+      operationId: retryReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryRequest'
+      responses:
+        '202':
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/reviews/{review_id}/export:
+    get:
+      tags: [Reviews]
+      summary: Export review report
+      operationId: exportReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: query
+          name: format
+          required: false
+          schema:
+            type: string
+            enum: [markdown, json]
+            default: markdown
+      responses:
+        '200':
+          description: Review export
+          content:
+            text/markdown:
+              schema:
+                type: string
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetReviewResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/evaluations/metrics:
+    get:
+      tags: [Evaluations]
+      summary: Query evaluation metrics
+      operationId: getEvaluationMetrics
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: service
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Evaluation metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationMetricsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+components:
+  parameters:
+    ReviewId:
+      in: path
+      name: review_id
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    CreateReviewRequest:
+      type: object
+      required:
+        - source_type
+        - source_id
+        - environment
+        - payload
+      properties:
+        source_type:
+          type: string
+          enum: [pull_request, sql_migration, k8s_diff, terraform_plan, gateway_config]
+        source_id:
+          type: string
+        repo:
+          type: string
+        service:
+          type: string
+        environment:
+          type: string
+        trigger_mode:
+          type: string
+          enum: [async, sync]
+          default: async
+        dedupe_key:
+          type: string
+        triggered_by:
+          type: string
+        payload:
+          $ref: '#/components/schemas/ReviewPayload'
+    ReviewPayload:
+      type: object
+      properties:
+        title:
+          type: string
+        author:
+          type: string
+        base_commit:
+          type: string
+        head_commit:
+          type: string
+        diff_url:
+          type: string
+          format: uri
+        metadata:
+          type: object
+          additionalProperties: true
+    CreateReviewResponse:
+      type: object
+      required: [review_id, task_id, status]
+      properties:
+        review_id:
+          type: string
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReviewStatus'
+        poll_url:
+          type: string
+    GetReviewResponse:
+      type: object
+      required: [review]
+      properties:
+        review:
+          $ref: '#/components/schemas/Review'
+        signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskSignal'
+        recommendation:
+          $ref: '#/components/schemas/Recommendation'
+        rollback_plan:
+          $ref: '#/components/schemas/RollbackPlan'
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceItem'
+    Review:
+      type: object
+      required:
+        - review_id
+        - status
+        - source_type
+        - created_at
+      properties:
+        review_id:
+          type: string
+        change_id:
+          type: string
+        source_type:
+          type: string
+          enum: [pull_request, sql_migration, k8s_diff, terraform_plan, gateway_config]
+        repo:
+          type: string
+        service:
+          type: string
+        environment:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReviewStatus'
+        risk_level:
+          $ref: '#/components/schemas/RiskLevel'
+        score:
+          type: integer
+        confidence:
+          type: number
+          format: float
+        summary:
+          type: string
+        human_review_required:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ReviewStatus:
+      type: string
+      enum:
+        - CREATED
+        - NORMALIZED
+        - UNDERSTOOD
+        - COLLECTING_CONTEXT
+        - CONTEXT_READY
+        - SIGNALS_EXTRACTED
+        - SCORED
+        - RECOMMENDED
+        - WAITING_HUMAN_REVIEW
+        - APPROVED
+        - REJECTED
+        - OVERRIDDEN
+        - FAILED
+        - CANCELLED
+    RiskLevel:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    RiskSignal:
+      type: object
+      required: [signal_name, severity]
+      properties:
+        signal_id:
+          type: string
+        signal_name:
+          type: string
+        severity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        score_delta:
+          type: integer
+        explanation:
+          type: string
+        evidence_refs:
+          type: array
+          items:
+            type: string
+    Recommendation:
+      type: object
+      properties:
+        required_reviewers:
+          type: array
+          items:
+            type: string
+        release_window:
+          type: string
+        rollout_strategy:
+          $ref: '#/components/schemas/RolloutStrategy'
+        observability_plan:
+          type: array
+          items:
+            type: string
+    RolloutStrategy:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            type: string
+        interval_minutes:
+          type: integer
+    RollbackPlan:
+      type: object
+      properties:
+        trigger_condition:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+        version_to_restore:
+          type: string
+        verification_metrics:
+          type: array
+          items:
+            type: string
+        rollback_deadline_seconds:
+          type: integer
+    EvidenceItem:
+      type: object
+      required: [evidence_id, type, source]
+      properties:
+        evidence_id:
+          type: string
+        type:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+        content_snippet:
+          type: string
+        reference_url:
+          type: string
+          format: uri
+        confidence:
+          type: number
+          format: float
+        metadata:
+          type: object
+          additionalProperties: true
+    TimelineResponse:
+      type: object
+      required: [review_id, events]
+      properties:
+        review_id:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEvent'
+    TimelineEvent:
+      type: object
+      required: [state, at]
+      properties:
+        state:
+          $ref: '#/components/schemas/ReviewStatus'
+        at:
+          type: string
+          format: date-time
+        detail:
+          type: string
+    HumanDecisionRequest:
+      type: object
+      required: [reviewer, decision]
+      properties:
+        reviewer:
+          type: string
+        decision:
+          type: string
+          enum: [approve, reject, override]
+        reason:
+          type: string
+        notify:
+          type: boolean
+          default: false
+    HumanDecisionResponse:
+      type: object
+      required: [review_id, status, recorded]
+      properties:
+        review_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReviewStatus'
+        recorded:
+          type: boolean
+    RetryRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    RetryResponse:
+      type: object
+      required: [review_id, task_id, status]
+      properties:
+        review_id:
+          type: string
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReviewStatus'
+    EvaluationMetricsResponse:
+      type: object
+      required: [window, metrics]
+      properties:
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from:
+              type: string
+              format: date
+            to:
+              type: string
+              format: date
+        service:
+          type: string
+        metrics:
+          type: object
+          required:
+            - review_count
+            - high_risk_recall
+            - false_positive_rate
+            - override_rate
+            - p95_latency_ms
+          properties:
+            review_count:
+              type: integer
+            high_risk_recall:
+              type: number
+              format: float
+            false_positive_rate:
+              type: number
+              format: float
+            override_rate:
+              type: number
+              format: float
+            p95_latency_ms:
+              type: integer
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
