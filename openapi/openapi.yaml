@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >
     MVP API contract for change review creation, querying, human decision
-    submission, retry, timeline, export, and evaluation metrics.
+    submission, retry, timeline, export, evaluation feedback, and evaluation metrics.
 servers:
   - url: https://api.example.com
     description: Production
@@ -120,6 +120,30 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /api/v1/reviews/{review_id}/evaluation:
+    post:
+      tags: [Evaluations]
+      summary: Record release outcome feedback for a review
+      operationId: updateEvaluation
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluationUpdateRequest'
+      responses:
+        '200':
+          description: Evaluation feedback recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationUpdateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/reviews/{review_id}/export:
     get:
       tags: [Reviews]
@@ -497,6 +521,25 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/ReviewStatus'
+    EvaluationUpdateRequest:
+      type: object
+      properties:
+        release_outcome:
+          type: string
+          enum: [success, failed, rolled_back]
+        incident_flag:
+          type: boolean
+        outcome_metadata:
+          type: object
+          additionalProperties: true
+    EvaluationUpdateResponse:
+      type: object
+      required: [review_id, recorded]
+      properties:
+        review_id:
+          type: string
+        recorded:
+          type: boolean
     EvaluationMetricsResponse:
       type: object
       required: [window, metrics]
