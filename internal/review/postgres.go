@@ -70,6 +70,9 @@ func (s *PostgresStore) Save(record Record) error {
 	if err := replaceHumanDecisions(ctx, tx, record); err != nil {
 		return err
 	}
+	if err := replaceEvaluation(ctx, tx, record); err != nil {
+		return err
+	}
 
 	return tx.Commit()
 }
@@ -213,6 +216,34 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 	}
 	if err := decisionRows.Err(); err != nil {
 		return Record{}, err
+	}
+
+	var finalDecision sql.NullString
+	var releaseOutcome sql.NullString
+	var incidentFlag sql.NullBool
+	var outcomeMetadata []byte
+	var createdAt time.Time
+	var updatedAt time.Time
+	err = s.db.QueryRowContext(ctx, `
+		SELECT final_human_decision, release_outcome, incident_flag, COALESCE(outcome_metadata, '{}'::jsonb), created_at, updated_at
+		FROM evaluation_records WHERE review_id = $1 ORDER BY id DESC LIMIT 1
+	`, reviewID).Scan(&finalDecision, &releaseOutcome, &incidentFlag, &outcomeMetadata, &createdAt, &updatedAt)
+	if err != nil && err != sql.ErrNoRows {
+		return Record{}, err
+	}
+	if err == nil {
+		record.Evaluation = &EvaluationRecord{CreatedAt: createdAt, UpdatedAt: updatedAt}
+		if finalDecision.Valid {
+			record.Evaluation.FinalHumanDecision = stringPtr(finalDecision.String)
+		}
+		if releaseOutcome.Valid {
+			record.Evaluation.ReleaseOutcome = stringPtr(releaseOutcome.String)
+		}
+		if incidentFlag.Valid {
+			value := incidentFlag.Bool
+			record.Evaluation.IncidentFlag = &value
+		}
+		_ = json.Unmarshal(outcomeMetadata, &record.Evaluation.OutcomeMetadata)
 	}
 
 	return record, nil
@@ -442,11 +473,69 @@ func replaceHumanDecisions(ctx context.Context, tx *sql.Tx, record Record) error
 	return nil
 }
 
+func replaceEvaluation(ctx context.Context, tx *sql.Tx, record Record) error {
+	if record.Evaluation == nil {
+		return nil
+	}
+	metadata, err := json.Marshal(record.Evaluation.OutcomeMetadata)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO evaluation_records (
+			review_id, final_human_decision, release_outcome, incident_flag, outcome_metadata, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT DO NOTHING
+	`,
+		record.Review.ReviewID,
+		nullStringPtr(record.Evaluation.FinalHumanDecision),
+		nullStringPtr(record.Evaluation.ReleaseOutcome),
+		nullBoolPtr(record.Evaluation.IncidentFlag),
+		jsonOrObject(metadata),
+		record.Evaluation.CreatedAt,
+		record.Evaluation.UpdatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE evaluation_records
+		SET final_human_decision = $2,
+		    release_outcome = $3,
+		    incident_flag = $4,
+		    outcome_metadata = $5,
+		    updated_at = $6
+		WHERE review_id = $1
+	`,
+		record.Review.ReviewID,
+		nullStringPtr(record.Evaluation.FinalHumanDecision),
+		nullStringPtr(record.Evaluation.ReleaseOutcome),
+		nullBoolPtr(record.Evaluation.IncidentFlag),
+		jsonOrObject(metadata),
+		record.Evaluation.UpdatedAt,
+	)
+	return err
+}
+
 func nullIfEmpty(value string) any {
 	if value == "" {
 		return nil
 	}
 	return value
+}
+
+func nullStringPtr(value *string) any {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return *value
+}
+
+func nullBoolPtr(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func jsonOrObject(value []byte) []byte {

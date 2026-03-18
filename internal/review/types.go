@@ -184,6 +184,15 @@ type Metrics struct {
 	P95LatencyMS      int     `json:"p95_latency_ms"`
 }
 
+type EvaluationRecord struct {
+	FinalHumanDecision *string        `json:"final_human_decision,omitempty"`
+	ReleaseOutcome     *string        `json:"release_outcome,omitempty"`
+	IncidentFlag       *bool          `json:"incident_flag,omitempty"`
+	OutcomeMetadata    map[string]any `json:"outcome_metadata,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+}
+
 type ErrorResponse struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
@@ -199,5 +208,6 @@ type Record struct {
 	Evidence       []EvidenceItem
 	Timeline       []TimelineEvent
 	HumanDecisions []HumanDecision
+	Evaluation     *EvaluationRecord
 	LastError      string
 }

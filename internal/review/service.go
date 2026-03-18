@@ -42,6 +42,13 @@ func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, e
 		Timeline: []TimelineEvent{
 			{State: StatusCreated, At: now, Detail: "review accepted"},
 		},
+		Evaluation: &EvaluationRecord{
+			CreatedAt: now,
+			UpdatedAt: now,
+			OutcomeMetadata: map[string]any{
+				"source_type": req.SourceType,
+			},
+		},
 	}
 
 	if req.Payload.Author != "" {
@@ -116,6 +123,16 @@ func (s *Service) SubmitHumanDecision(reviewID string, req HumanDecisionRequest)
 		OverrideFlag: req.Decision == "override",
 		CreatedAt:    now,
 	})
+	if record.Evaluation == nil {
+		record.Evaluation = &EvaluationRecord{CreatedAt: now}
+	}
+	record.Evaluation.FinalHumanDecision = stringPtr(req.Decision)
+	record.Evaluation.UpdatedAt = now
+	if record.Evaluation.OutcomeMetadata == nil {
+		record.Evaluation.OutcomeMetadata = map[string]any{}
+	}
+	record.Evaluation.OutcomeMetadata["reviewer"] = req.Reviewer
+	record.Evaluation.OutcomeMetadata["reason"] = req.Reason
 	record.Timeline = append(record.Timeline, TimelineEvent{
 		State:  record.Review.Status,
 		At:     now,
@@ -149,6 +166,9 @@ func (s *Service) RetryReview(reviewID string, _ RetryRequest) (RetryResponse, e
 		At:     record.Review.UpdatedAt,
 		Detail: "retry accepted",
 	})
+	if record.Evaluation != nil {
+		record.Evaluation.UpdatedAt = record.Review.UpdatedAt
+	}
 
 	if err := s.store.Save(record); err != nil {
 		return RetryResponse{}, err
@@ -213,29 +233,44 @@ func (s *Service) GetEvaluationMetrics(from, to, service string) (EvaluationMetr
 	end = end.Add(24*time.Hour - time.Nanosecond)
 
 	records := s.store.List()
-	filtered := make([]Record, 0, len(records))
+	count := 0
 	overrides := 0
 	highRisk := 0
+	highRiskWithIncident := 0
+	highRiskWithoutIncident := 0
 	for _, record := range records {
-		if !record.Review.CreatedAt.Before(start) && !record.Review.CreatedAt.After(end) {
-			if service == "" || record.Review.Service == service {
-				filtered = append(filtered, record)
-				if record.Review.Status == StatusOverridden {
-					overrides++
-				}
-				if record.Review.RiskLevel == RiskHigh || record.Review.RiskLevel == RiskCritical {
-					highRisk++
+		if record.Review.CreatedAt.Before(start) || record.Review.CreatedAt.After(end) {
+			continue
+		}
+		if service != "" && record.Review.Service != service {
+			continue
+		}
+
+		count++
+		if record.Review.Status == StatusOverridden {
+			overrides++
+		}
+		if record.Review.RiskLevel == RiskHigh || record.Review.RiskLevel == RiskCritical {
+			highRisk++
+			if record.Evaluation != nil && record.Evaluation.IncidentFlag != nil {
+				if *record.Evaluation.IncidentFlag {
+					highRiskWithIncident++
+				} else {
+					highRiskWithoutIncident++
 				}
 			}
 		}
 	}
 
-	count := len(filtered)
 	overrideRate := 0.0
 	highRiskRecall := 0.0
+	falsePositiveRate := 0.08
 	if count > 0 {
 		overrideRate = float64(overrides) / float64(count)
 		highRiskRecall = float64(highRisk) / float64(count)
+	}
+	if highRiskWithIncident+highRiskWithoutIncident > 0 {
+		falsePositiveRate = float64(highRiskWithoutIncident) / float64(highRiskWithIncident+highRiskWithoutIncident)
 	}
 
 	return EvaluationMetricsResponse{
@@ -244,7 +279,7 @@ func (s *Service) GetEvaluationMetrics(from, to, service string) (EvaluationMetr
 		Metrics: Metrics{
 			ReviewCount:       count,
 			HighRiskRecall:    highRiskRecall,
-			FalsePositiveRate: 0.08,
+			FalsePositiveRate: falsePositiveRate,
 			OverrideRate:      overrideRate,
 			P95LatencyMS:      1800,
 		},
@@ -285,6 +320,14 @@ func (s *Service) runPipeline(record Record, req CreateReviewRequest) Record {
 	record.RollbackPlan = rollbackPlanFor(req)
 	record.Review.HumanReviewRequired = record.Review.RiskLevel == RiskHigh || record.Review.RiskLevel == RiskCritical
 	record.Review.Summary = summaryFor(req, record.Signals, record.Review)
+	if record.Evaluation != nil {
+		record.Evaluation.UpdatedAt = record.Review.UpdatedAt
+		if record.Evaluation.OutcomeMetadata == nil {
+			record.Evaluation.OutcomeMetadata = map[string]any{}
+		}
+		record.Evaluation.OutcomeMetadata["risk_level"] = record.Review.RiskLevel
+		record.Evaluation.OutcomeMetadata["score"] = record.Review.Score
+	}
 
 	if record.Review.HumanReviewRequired {
 		record = s.transition(record, StatusWaitingHumanReview, "high risk review requires human approval")
@@ -469,6 +512,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return "unknown target"
+}
+
+func stringPtr(value string) *string {
+	v := value
+	return &v
 }
 
 func (s *Service) nextID(prefix string) string {
