@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: acrc-postgres
+    environment:
+      POSTGRES_DB: review_copilot
+      POSTGRES_USER: review
+      POSTGRES_PASSWORD: review
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review -d review_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  review-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: acrc-review-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://review:review@postgres:5432/review_copilot?sslmode=disable"
+      AUTO_MIGRATE: "1"
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres-data:
