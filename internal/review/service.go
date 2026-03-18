@@ -22,6 +22,22 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, error) {
+	dedupeKey := dedupeKeyFor(req)
+	if dedupeKey != "" {
+		existing, err := s.store.FindByDedupeKey(dedupeKey)
+		if err == nil {
+			return CreateReviewResponse{
+				ReviewID: existing.Review.ReviewID,
+				TaskID:   existing.TaskID,
+				Status:   existing.Review.Status,
+				PollURL:  "/api/v1/reviews/" + existing.Review.ReviewID,
+			}, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return CreateReviewResponse{}, err
+		}
+	}
+
 	now := time.Now().UTC()
 	reviewID := s.nextID("rvw")
 	taskID := s.nextID("tsk")
@@ -30,6 +46,7 @@ func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, e
 		Review: Review{
 			ReviewID:    reviewID,
 			ChangeID:    req.SourceID,
+			DedupeKey:   dedupeKey,
 			SourceType:  req.SourceType,
 			Repo:        req.Repo,
 			Service:     req.Service,
@@ -38,7 +55,8 @@ func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, e
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		},
-		TaskID: taskID,
+		Request: &req,
+		TaskID:  taskID,
 		Timeline: []TimelineEvent{
 			{State: StatusCreated, At: now, Detail: "review accepted"},
 		},
@@ -60,6 +78,20 @@ func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, e
 	record = s.runPipeline(record, req)
 
 	if err := s.store.Save(record); err != nil {
+		if dedupeKey != "" && errors.Is(err, ErrConflict) {
+			existing, findErr := s.store.FindByDedupeKey(dedupeKey)
+			if findErr == nil {
+				return CreateReviewResponse{
+					ReviewID: existing.Review.ReviewID,
+					TaskID:   existing.TaskID,
+					Status:   existing.Review.Status,
+					PollURL:  "/api/v1/reviews/" + existing.Review.ReviewID,
+				}, nil
+			}
+			if !errors.Is(findErr, ErrNotFound) {
+				return CreateReviewResponse{}, findErr
+			}
+		}
 		return CreateReviewResponse{}, err
 	}
 
@@ -159,8 +191,14 @@ func (s *Service) RetryReview(reviewID string, _ RetryRequest) (RetryResponse, e
 		return RetryResponse{}, ErrConflict
 	}
 
+	req := requestFromRecord(record)
 	record.Review.Status = StatusCreated
 	record.Review.UpdatedAt = time.Now().UTC()
+	record.Signals = nil
+	record.Recommendation = Recommendation{}
+	record.RollbackPlan = RollbackPlan{}
+	record.Evidence = nil
+	record.LastError = ""
 	record.Timeline = append(record.Timeline, TimelineEvent{
 		State:  StatusCreated,
 		At:     record.Review.UpdatedAt,
@@ -169,6 +207,7 @@ func (s *Service) RetryReview(reviewID string, _ RetryRequest) (RetryResponse, e
 	if record.Evaluation != nil {
 		record.Evaluation.UpdatedAt = record.Review.UpdatedAt
 	}
+	record = s.runPipeline(record, req)
 
 	if err := s.store.Save(record); err != nil {
 		return RetryResponse{}, err
@@ -553,6 +592,34 @@ func firstNonEmpty(values ...string) string {
 func stringPtr(value string) *string {
 	v := value
 	return &v
+}
+
+func dedupeKeyFor(req CreateReviewRequest) string {
+	if req.DedupeKey != "" {
+		return req.DedupeKey
+	}
+	if req.SourceID == "" || req.Environment == "" {
+		return ""
+	}
+	return strings.ToLower(fmt.Sprintf("%s:%s:%s:%s", req.SourceType, req.SourceID, req.Payload.HeadCommit, req.Environment))
+}
+
+func requestFromRecord(record Record) CreateReviewRequest {
+	if record.Request != nil {
+		return *record.Request
+	}
+
+	return CreateReviewRequest{
+		SourceType:  record.Review.SourceType,
+		SourceID:    record.Review.ChangeID,
+		Repo:        record.Review.Repo,
+		Service:     record.Review.Service,
+		Environment: record.Review.Environment,
+		DedupeKey:   record.Review.DedupeKey,
+		Payload: ReviewPayload{
+			BaseCommit: record.RollbackPlan.VersionToRestore,
+		},
+	}
 }
 
 func (s *Service) nextID(prefix string) string {

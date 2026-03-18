@@ -193,3 +193,75 @@ func TestUpdateEvaluationAffectsMetrics(t *testing.T) {
 		t.Fatalf("false_positive_rate = %v, want 1", metricsResp.Metrics.FalsePositiveRate)
 	}
 }
+
+func TestCreateReviewIsIdempotentByDedupeKey(t *testing.T) {
+	service := review.NewService(review.NewMemoryStore())
+	handler := api.NewHandler(service)
+
+	createBody := map[string]any{
+		"source_type": "pull_request",
+		"source_id":   "PR-456",
+		"repo":        "gateway-service",
+		"service":     "api-gateway",
+		"environment": "prod",
+		"dedupe_key":  "github:gateway-service:pr-456:def456:prod",
+		"payload": map[string]any{
+			"title":       "adjust auth routing",
+			"author":      "alice",
+			"base_commit": "abc123",
+			"head_commit": "def456",
+		},
+	}
+	createPayload, _ := json.Marshal(createBody)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewReader(createPayload))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRec := httptest.NewRecorder()
+	handler.ServeHTTP(firstRec, firstReq)
+
+	if firstRec.Code != http.StatusAccepted {
+		t.Fatalf("first create status = %d, want %d, body=%s", firstRec.Code, http.StatusAccepted, firstRec.Body.String())
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewReader(createPayload))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRec := httptest.NewRecorder()
+	handler.ServeHTTP(secondRec, secondReq)
+
+	if secondRec.Code != http.StatusAccepted {
+		t.Fatalf("second create status = %d, want %d, body=%s", secondRec.Code, http.StatusAccepted, secondRec.Body.String())
+	}
+
+	var firstResp review.CreateReviewResponse
+	if err := json.Unmarshal(firstRec.Body.Bytes(), &firstResp); err != nil {
+		t.Fatalf("decode first create response: %v", err)
+	}
+	var secondResp review.CreateReviewResponse
+	if err := json.Unmarshal(secondRec.Body.Bytes(), &secondResp); err != nil {
+		t.Fatalf("decode second create response: %v", err)
+	}
+
+	if firstResp.ReviewID != secondResp.ReviewID {
+		t.Fatalf("review_id mismatch: first=%s second=%s", firstResp.ReviewID, secondResp.ReviewID)
+	}
+	if firstResp.TaskID != secondResp.TaskID {
+		t.Fatalf("task_id mismatch: first=%s second=%s", firstResp.TaskID, secondResp.TaskID)
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	metricsReq := httptest.NewRequest(http.MethodGet, "/api/v1/evaluations/metrics?from="+today+"&to="+today+"&service=api-gateway", nil)
+	metricsRec := httptest.NewRecorder()
+	handler.ServeHTTP(metricsRec, metricsReq)
+
+	if metricsRec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d, body=%s", metricsRec.Code, http.StatusOK, metricsRec.Body.String())
+	}
+
+	var metricsResp review.EvaluationMetricsResponse
+	if err := json.Unmarshal(metricsRec.Body.Bytes(), &metricsResp); err != nil {
+		t.Fatalf("decode metrics response: %v", err)
+	}
+	if metricsResp.Metrics.ReviewCount != 1 {
+		t.Fatalf("review_count = %d, want 1", metricsResp.Metrics.ReviewCount)
+	}
+}

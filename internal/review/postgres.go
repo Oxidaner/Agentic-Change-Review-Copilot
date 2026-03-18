@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -50,6 +52,12 @@ func (s *PostgresStore) Save(record Record) error {
 	defer tx.Rollback()
 
 	if err := upsertReview(ctx, tx, record); err != nil {
+		if isDedupeConflict(err) {
+			return ErrConflict
+		}
+		return err
+	}
+	if err := replaceChangeSnapshot(ctx, tx, record); err != nil {
 		return err
 	}
 	if err := replaceTask(ctx, tx, record); err != nil {
@@ -83,7 +91,7 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 	var riskLevel string
 
 	err := s.db.QueryRowContext(ctx, `
-		SELECT review_id, change_id, source_type, COALESCE(repo, ''), COALESCE(service, ''),
+		SELECT review_id, change_id, COALESCE(dedupe_key, ''), source_type, COALESCE(repo, ''), COALESCE(service, ''),
 		       COALESCE(environment, ''), status, COALESCE(risk_level, ''), COALESCE(score, 0),
 		       COALESCE(confidence, 0), COALESCE(summary, ''), human_review_required, created_at, updated_at
 		FROM reviews
@@ -91,6 +99,7 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 	`, reviewID).Scan(
 		&record.Review.ReviewID,
 		&record.Review.ChangeID,
+		&record.Review.DedupeKey,
 		&record.Review.SourceType,
 		&record.Review.Repo,
 		&record.Review.Service,
@@ -111,6 +120,24 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 		return Record{}, err
 	}
 	record.Review.RiskLevel = RiskLevel(riskLevel)
+
+	var normalizedPayload []byte
+	err = s.db.QueryRowContext(ctx, `
+		SELECT normalized_payload
+		FROM change_snapshots
+		WHERE raw_payload_ref = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, reviewID).Scan(&normalizedPayload)
+	if err != nil && err != sql.ErrNoRows {
+		return Record{}, err
+	}
+	if err == nil {
+		var req CreateReviewRequest
+		if unmarshalErr := json.Unmarshal(normalizedPayload, &req); unmarshalErr == nil {
+			record.Request = &req
+		}
+	}
 
 	_ = s.db.QueryRowContext(ctx, `
 		SELECT task_id FROM review_tasks WHERE review_id = $1 ORDER BY created_at DESC LIMIT 1
@@ -271,19 +298,35 @@ func (s *PostgresStore) List() []Record {
 	return out
 }
 
+func (s *PostgresStore) FindByDedupeKey(dedupeKey string) (Record, error) {
+	ctx := context.Background()
+	var reviewID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT review_id FROM reviews WHERE dedupe_key = $1 ORDER BY created_at DESC LIMIT 1
+	`, dedupeKey).Scan(&reviewID)
+	if err == sql.ErrNoRows {
+		return Record{}, ErrNotFound
+	}
+	if err != nil {
+		return Record{}, err
+	}
+	return s.Get(reviewID)
+}
+
 func upsertReview(ctx context.Context, tx *sql.Tx, record Record) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO reviews (
-			review_id, change_id, source_type, repo, service, environment, author,
+			review_id, change_id, dedupe_key, source_type, repo, service, environment, author,
 			status, risk_level, score, confidence, summary, can_release,
 			human_review_required, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12, $13,
-			$14, $15, $16
+			$1, $2, $3, $4, $5, $6, $7, $8,
+			$9, $10, $11, $12, $13, $14,
+			$15, $16, $17
 		)
 		ON CONFLICT (review_id) DO UPDATE SET
 			change_id = EXCLUDED.change_id,
+			dedupe_key = EXCLUDED.dedupe_key,
 			source_type = EXCLUDED.source_type,
 			repo = EXCLUDED.repo,
 			service = EXCLUDED.service,
@@ -299,6 +342,7 @@ func upsertReview(ctx context.Context, tx *sql.Tx, record Record) error {
 	`,
 		record.Review.ReviewID,
 		record.Review.ChangeID,
+		nullIfEmpty(record.Review.DedupeKey),
 		record.Review.SourceType,
 		nullIfEmpty(record.Review.Repo),
 		nullIfEmpty(record.Review.Service),
@@ -338,6 +382,48 @@ func replaceTask(ctx context.Context, tx *sql.Tx, record Record) error {
 		finishedAtFor(record.Review.Status, record.Review.UpdatedAt),
 		record.Review.CreatedAt,
 		record.Review.UpdatedAt,
+	)
+	return err
+}
+
+func replaceChangeSnapshot(ctx context.Context, tx *sql.Tx, record Record) error {
+	if record.Request == nil {
+		return nil
+	}
+
+	normalizedPayload, err := json.Marshal(record.Request)
+	if err != nil {
+		return err
+	}
+
+	var fileList []string
+	if record.Request.Payload.Metadata != nil {
+		fileList = metadataStringSlice(record.Request.Payload.Metadata, "file_list")
+	}
+	fileListJSON, err := json.Marshal(fileList)
+	if err != nil {
+		return err
+	}
+	semanticTagsJSON, err := json.Marshal([]string{record.Request.SourceType})
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM change_snapshots WHERE raw_payload_ref = $1`, record.Review.ReviewID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO change_snapshots (
+			change_id, raw_payload_ref, normalized_payload, semantic_tags, file_list, diff_stats, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`,
+		record.Review.ChangeID,
+		record.Review.ReviewID,
+		jsonOrObject(normalizedPayload),
+		jsonOrArray(semanticTagsJSON),
+		jsonOrArray(fileListJSON),
+		[]byte("{}"),
+		record.Review.CreatedAt,
 	)
 	return err
 }
@@ -571,4 +657,12 @@ func isAlreadyExistsError(err error) bool {
 	}
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "already exists")
+}
+
+func isDedupeConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "23505" && strings.Contains(strings.ToLower(pgErr.Message), "dedupe_key")
 }

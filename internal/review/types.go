@@ -61,6 +61,7 @@ type CreateReviewResponse struct {
 type Review struct {
 	ReviewID            string       `json:"review_id"`
 	ChangeID            string       `json:"change_id,omitempty"`
+	DedupeKey           string       `json:"-"`
 	SourceType          string       `json:"source_type"`
 	Repo                string       `json:"repo,omitempty"`
 	Service             string       `json:"service,omitempty"`
@@ -212,6 +213,7 @@ type ErrorResponse struct {
 
 type Record struct {
 	Review         Review
+	Request        *CreateReviewRequest
 	TaskID         string
 	Signals        []RiskSignal
 	Recommendation Recommendation
