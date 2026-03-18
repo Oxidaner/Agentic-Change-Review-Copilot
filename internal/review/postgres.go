@@ -67,6 +67,9 @@ func (s *PostgresStore) Save(record Record) error {
 	if err := replaceAuditEvents(ctx, tx, record); err != nil {
 		return err
 	}
+	if err := replaceHumanDecisions(ctx, tx, record); err != nil {
+		return err
+	}
 
 	return tx.Commit()
 }
@@ -189,6 +192,26 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 		record.Timeline = append(record.Timeline, event)
 	}
 	if err := timelineRows.Err(); err != nil {
+		return Record{}, err
+	}
+
+	decisionRows, err := s.db.QueryContext(ctx, `
+		SELECT reviewer, decision, COALESCE(reason, ''), override_flag, created_at
+		FROM human_decisions WHERE review_id = $1 ORDER BY created_at ASC, id ASC
+	`, reviewID)
+	if err != nil {
+		return Record{}, err
+	}
+	defer decisionRows.Close()
+
+	for decisionRows.Next() {
+		var decision HumanDecision
+		if err := decisionRows.Scan(&decision.Reviewer, &decision.Decision, &decision.Reason, &decision.OverrideFlag, &decision.CreatedAt); err != nil {
+			return Record{}, err
+		}
+		record.HumanDecisions = append(record.HumanDecisions, decision)
+	}
+	if err := decisionRows.Err(); err != nil {
 		return Record{}, err
 	}
 
@@ -391,6 +414,28 @@ func replaceAuditEvents(ctx context.Context, tx *sql.Tx, record Record) error {
 			INSERT INTO audit_events (review_id, event_type, payload, trace_id, created_at)
 			VALUES ($1, $2, $3, $4, $5)
 		`, record.Review.ReviewID, event.State, payload, record.TaskID, event.At); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func replaceHumanDecisions(ctx context.Context, tx *sql.Tx, record Record) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM human_decisions WHERE review_id = $1`, record.Review.ReviewID); err != nil {
+		return err
+	}
+	for _, decision := range record.HumanDecisions {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO human_decisions (review_id, reviewer, decision, reason, override_flag, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`,
+			record.Review.ReviewID,
+			decision.Reviewer,
+			decision.Decision,
+			nullIfEmpty(decision.Reason),
+			decision.OverrideFlag,
+			decision.CreatedAt,
+		); err != nil {
 			return err
 		}
 	}

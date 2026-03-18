@@ -109,6 +109,13 @@ func (s *Service) SubmitHumanDecision(reviewID string, req HumanDecisionRequest)
 		return HumanDecisionResponse{}, fmt.Errorf("invalid decision")
 	}
 	record.Review.UpdatedAt = now
+	record.HumanDecisions = append(record.HumanDecisions, HumanDecision{
+		Reviewer:     req.Reviewer,
+		Decision:     req.Decision,
+		Reason:       req.Reason,
+		OverrideFlag: req.Decision == "override",
+		CreatedAt:    now,
+	})
 	record.Timeline = append(record.Timeline, TimelineEvent{
 		State:  record.Review.Status,
 		At:     now,

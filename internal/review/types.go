@@ -147,6 +147,14 @@ type HumanDecisionResponse struct {
 	Recorded bool         `json:"recorded"`
 }
 
+type HumanDecision struct {
+	Reviewer     string    `json:"reviewer"`
+	Decision     string    `json:"decision"`
+	Reason       string    `json:"reason,omitempty"`
+	OverrideFlag bool      `json:"override_flag"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type RetryRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
@@ -190,5 +198,6 @@ type Record struct {
 	RollbackPlan   RollbackPlan
 	Evidence       []EvidenceItem
 	Timeline       []TimelineEvent
+	HumanDecisions []HumanDecision
 	LastError      string
 }
