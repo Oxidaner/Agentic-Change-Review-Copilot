@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"agentic-change-review-copilot/internal/api"
 	"agentic-change-review-copilot/internal/review"
@@ -127,5 +128,68 @@ func TestSubmitHumanDecision(t *testing.T) {
 	}
 	if timeline.Events[len(timeline.Events)-1].State != review.StatusOverridden {
 		t.Fatalf("last state = %s, want %s", timeline.Events[len(timeline.Events)-1].State, review.StatusOverridden)
+	}
+}
+
+func TestUpdateEvaluationAffectsMetrics(t *testing.T) {
+	service := review.NewService(review.NewMemoryStore())
+	handler := api.NewHandler(service)
+
+	createBody := map[string]any{
+		"source_type": "sql_migration",
+		"source_id":   "SQL-2",
+		"service":     "billing",
+		"environment": "prod",
+		"payload": map[string]any{
+			"title":  "change billing schema",
+			"author": "alice",
+		},
+	}
+	createPayload, _ := json.Marshal(createBody)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewReader(createPayload))
+	createRec := httptest.NewRecorder()
+	handler.ServeHTTP(createRec, createReq)
+
+	var createResp review.CreateReviewResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	incidentFalse := false
+	evaluationBody := map[string]any{
+		"release_outcome": "success",
+		"incident_flag":   incidentFalse,
+		"outcome_metadata": map[string]any{
+			"release_id": "rel-001",
+		},
+	}
+	evaluationPayload, _ := json.Marshal(evaluationBody)
+	evalReq := httptest.NewRequest(http.MethodPost, "/api/v1/reviews/"+createResp.ReviewID+"/evaluation", bytes.NewReader(evaluationPayload))
+	evalReq.Header.Set("Content-Type", "application/json")
+	evalRec := httptest.NewRecorder()
+	handler.ServeHTTP(evalRec, evalReq)
+
+	if evalRec.Code != http.StatusOK {
+		t.Fatalf("evaluation status = %d, want %d, body=%s", evalRec.Code, http.StatusOK, evalRec.Body.String())
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	metricsReq := httptest.NewRequest(http.MethodGet, "/api/v1/evaluations/metrics?from="+today+"&to="+today+"&service=billing", nil)
+	metricsRec := httptest.NewRecorder()
+	handler.ServeHTTP(metricsRec, metricsReq)
+
+	if metricsRec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d, body=%s", metricsRec.Code, http.StatusOK, metricsRec.Body.String())
+	}
+
+	var metricsResp review.EvaluationMetricsResponse
+	if err := json.Unmarshal(metricsRec.Body.Bytes(), &metricsResp); err != nil {
+		t.Fatalf("decode metrics response: %v", err)
+	}
+	if metricsResp.Metrics.ReviewCount != 1 {
+		t.Fatalf("review_count = %d, want 1", metricsResp.Metrics.ReviewCount)
+	}
+	if metricsResp.Metrics.FalsePositiveRate != 1 {
+		t.Fatalf("false_positive_rate = %v, want 1", metricsResp.Metrics.FalsePositiveRate)
 	}
 }

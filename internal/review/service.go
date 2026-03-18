@@ -221,6 +221,42 @@ func (s *Service) ExportReview(reviewID, format string) ([]byte, string, error) 
 	return []byte(body), "text/markdown", nil
 }
 
+func (s *Service) UpdateEvaluation(reviewID string, req EvaluationUpdateRequest) (EvaluationUpdateResponse, error) {
+	record, err := s.store.Get(reviewID)
+	if err != nil {
+		return EvaluationUpdateResponse{}, err
+	}
+
+	now := time.Now().UTC()
+	if record.Evaluation == nil {
+		record.Evaluation = &EvaluationRecord{CreatedAt: now}
+	}
+	if req.ReleaseOutcome != "" {
+		record.Evaluation.ReleaseOutcome = stringPtr(req.ReleaseOutcome)
+	}
+	if req.IncidentFlag != nil {
+		record.Evaluation.IncidentFlag = req.IncidentFlag
+	}
+	if record.Evaluation.OutcomeMetadata == nil {
+		record.Evaluation.OutcomeMetadata = map[string]any{}
+	}
+	for key, value := range req.OutcomeMetadata {
+		record.Evaluation.OutcomeMetadata[key] = value
+	}
+	record.Evaluation.UpdatedAt = now
+	record.Timeline = append(record.Timeline, TimelineEvent{
+		State:  record.Review.Status,
+		At:     now,
+		Detail: "evaluation record updated",
+	})
+
+	if err := s.store.Save(record); err != nil {
+		return EvaluationUpdateResponse{}, err
+	}
+
+	return EvaluationUpdateResponse{ReviewID: reviewID, Recorded: true}, nil
+}
+
 func (s *Service) GetEvaluationMetrics(from, to, service string) (EvaluationMetricsResponse, error) {
 	start, err := time.Parse("2006-01-02", from)
 	if err != nil {

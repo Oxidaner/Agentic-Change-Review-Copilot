@@ -63,6 +63,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.submitHumanDecision(w, r, reviewID)
 	case parts[1] == "retry" && r.Method == http.MethodPost:
 		h.retryReview(w, r, reviewID)
+	case parts[1] == "evaluation" && r.Method == http.MethodPost:
+		h.updateEvaluation(w, r, reviewID)
 	case parts[1] == "export" && r.Method == http.MethodGet:
 		h.exportReview(w, r, reviewID)
 	default:
@@ -140,6 +142,21 @@ func (h *Handler) retryReview(w http.ResponseWriter, r *http.Request, reviewID s
 		return
 	}
 	h.writeJSON(w, http.StatusAccepted, resp)
+}
+
+func (h *Handler) updateEvaluation(w http.ResponseWriter, r *http.Request, reviewID string) {
+	var req review.EvaluationUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	resp, err := h.service.UpdateEvaluation(reviewID, req)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) exportReview(w http.ResponseWriter, r *http.Request, reviewID string) {

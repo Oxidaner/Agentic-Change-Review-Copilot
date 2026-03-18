@@ -165,6 +165,17 @@ type RetryResponse struct {
 	Status   ReviewStatus `json:"status"`
 }
 
+type EvaluationUpdateRequest struct {
+	ReleaseOutcome  string         `json:"release_outcome,omitempty"`
+	IncidentFlag    *bool          `json:"incident_flag,omitempty"`
+	OutcomeMetadata map[string]any `json:"outcome_metadata,omitempty"`
+}
+
+type EvaluationUpdateResponse struct {
+	ReviewID string `json:"review_id"`
+	Recorded bool   `json:"recorded"`
+}
+
 type EvaluationMetricsResponse struct {
 	Window  MetricsWindow `json:"window"`
 	Service string        `json:"service,omitempty"`
