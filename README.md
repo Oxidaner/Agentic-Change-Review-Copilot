@@ -1,61 +1,42 @@
-# Agentic Change Review Copilot
+# Workflow Agent AI Test Platform
 
-Agentic Change Review Copilot is a Go-based MVP for pre-release change risk review. It accepts structured change-review requests and returns a review record with risk signals, risk level, rollout guidance, rollback planning, and human review status.
+This repository is a Go-based MVP for a workflow-first AI test automation platform.
+Its current main line is:
 
-This repository is intended as a practical starting point for a GitHub-facing change review service, especially for pull request review workflows that need more structure than a plain LLM summary.
+`PR / requirement change -> test point extraction -> test case generation -> tool execution -> smart assertion -> failure analysis -> test report`
 
-## Overview
+The project is intentionally scoped around one primary scenario first:
 
-Modern release risk rarely comes from code diffs alone. It also depends on:
-
-- whether the change targets production
-- whether it touches critical services such as auth, gateway, or billing
-- whether the change affects sensitive artifacts like migrations or routing rules
-- whether rollout and rollback plans are explicit
-- whether the review result is traceable and auditable
-
-This project adds a structured review layer before release. It does not execute production deployments.
+- Phase 1: PR-driven API regression testing
+- Phase 2: Web UI core-path testing
+- Phase 3: mobile automation expansion
 
 ## Current MVP
 
-The current repository contains a runnable Phase 1 API skeleton with:
+The current repository already exposes a runnable backend for the new testflow direction:
 
-- review creation
-- review detail query
-- timeline query
-- human decision submission
-- retry for failed reviews
-- evaluation feedback persistence
-- review export
-- aggregate evaluation metrics
+- create test tasks
+- query task detail
+- query workflow timeline
+- retry tasks that need manual triage
+- export Markdown or JSON reports
+- query workflow metrics
+- store data in memory or PostgreSQL
 
-The review pipeline is currently a fixed MVP DAG with heuristic rules. It does not yet integrate with real Git providers, incident systems, runbooks, or live metrics.
-
-## GitHub Use Case
-
-One intended direction for this project is to serve as the backend for GitHub pull request risk review:
-
-- receive PR-related metadata from GitHub
-- normalize it into a review request
-- generate structured risk output
-- escalate high-risk changes to human approval
-
-The API already supports `pull_request` as a `source_type`, so a GitHub webhook adapter can be added on top of the current service without changing the core review contract.
+The workflow is still heuristic and simulated. Real test tool integrations are the next layer.
 
 ## API
 
 Implemented endpoints:
 
-- `POST /api/v1/reviews`
-- `GET /api/v1/reviews/{review_id}`
-- `GET /api/v1/reviews/{review_id}/timeline`
-- `POST /api/v1/reviews/{review_id}/human-decision`
-- `POST /api/v1/reviews/{review_id}/retry`
-- `POST /api/v1/reviews/{review_id}/evaluation`
-- `GET /api/v1/reviews/{review_id}/export`
-- `GET /api/v1/evaluations/metrics`
+- `POST /api/v1/test-tasks`
+- `GET /api/v1/test-tasks/{task_id}`
+- `GET /api/v1/test-tasks/{task_id}/timeline`
+- `POST /api/v1/test-tasks/{task_id}/retry`
+- `GET /api/v1/test-tasks/{task_id}/report`
+- `GET /api/v1/test-metrics`
 
-The API contract is defined in [openapi/openapi.yaml](E:/project/AI_project/Agentic-Change-Review-Copilot/openapi/openapi.yaml).
+The API contract is defined in [openapi/openapi.yaml](openapi/openapi.yaml).
 
 ## Quick Start
 
@@ -65,11 +46,7 @@ Run locally with Docker Compose:
 docker compose up --build
 ```
 
-The API will be available at:
-
-```text
-http://localhost:8080
-```
+The API will be available at `http://localhost:8080`.
 
 Key environment variables:
 
@@ -80,22 +57,18 @@ Key environment variables:
 ## Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/reviews \
+curl -X POST http://localhost:8080/api/v1/test-tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "source_type": "pull_request",
+    "input_type": "pull_request",
     "source_id": "PR-123",
     "repo": "gateway-service",
     "service": "api-gateway",
-    "environment": "prod",
     "payload": {
       "title": "adjust auth routing",
       "author": "alice",
-      "base_commit": "abc123",
       "head_commit": "def456",
-      "metadata": {
-        "file_list": ["configs/routes.yaml", "gateway/auth.go"]
-      }
+      "description": "route auth traffic through gateway"
     }
   }'
 ```
@@ -104,50 +77,33 @@ curl -X POST http://localhost:8080/api/v1/reviews \
 
 - in-memory storage by default for local development
 - PostgreSQL when `DATABASE_URL` is configured
-- SQL schema migrations under [migrations](E:/project/AI_project/Agentic-Change-Review-Copilot/migrations)
+- SQL schema migrations under [migrations](migrations)
 
 ## Project Layout
 
 ```text
 cmd/review-api/         API entrypoint
 internal/api/           HTTP handlers and tests
-internal/review/        review domain logic and storage
+internal/testflow/      test workflow domain logic and storage
+internal/review/        legacy review-oriented prototype retained temporarily
 migrations/             SQL migrations
 openapi/                OpenAPI contract
-docs/                   product spec, design, progress, local development
+docs/                   spec, design, progress, local development
 ```
 
 ## Documentation
 
-- [docs/spec.md](E:/project/AI_project/Agentic-Change-Review-Copilot/docs/spec.md)
-- [docs/agentic_change_review_copilot_design.md](E:/project/AI_project/Agentic-Change-Review-Copilot/docs/agentic_change_review_copilot_design.md)
-- [docs/progress.md](E:/project/AI_project/Agentic-Change-Review-Copilot/docs/progress.md)
-- [docs/local-development.md](E:/project/AI_project/Agentic-Change-Review-Copilot/docs/local-development.md)
+- [docs/spec.md](docs/spec.md)
+- [docs/workflow_agent_ai_test_platform_design.md](docs/workflow_agent_ai_test_platform_design.md)
+- [docs/progress.md](docs/progress.md)
+- [docs/local-development.md](docs/local-development.md)
 
 ## Status
 
-This repository is currently a runnable architecture prototype. It already includes:
+This repository now runs on the new `test-tasks` API surface, but some legacy `internal/review` code is still kept in-tree during the rewrite. The primary missing pieces are:
 
-- a working Go API
-- PostgreSQL-backed persistence
-- SQL migrations
-- OpenAPI documentation
-- handler and service tests
-- Docker-based local startup
-
-Still missing:
-
-- real GitHub webhook ingestion
-- real evidence retrieval from incidents, runbooks, and metrics
-- authentication and authorization
-- review console frontend
-- PostgreSQL integration tests
-- OpenAPI contract validation in CI
-
-## Next Steps
-
-- add a GitHub webhook adapter for PR-triggered review creation
-- replace heuristic-only logic with pluggable rule modules
-- connect evidence sources such as incidents, runbooks, and metrics
-- add PostgreSQL integration coverage
-- improve the GitHub landing page with badges, diagrams, and example responses
+- real API test runner integration
+- smarter assertion generation and schema validation
+- failure analysis grounded in logs, traces, and artifacts
+- PostgreSQL integration tests for the new task lifecycle
+- optional CLI or webhook adapters

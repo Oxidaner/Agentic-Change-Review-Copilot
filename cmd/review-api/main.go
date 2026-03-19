@@ -17,7 +17,7 @@ func main() {
 	handler := api.NewHandler(service)
 
 	addr := ":" + envOrDefault("PORT", "8080")
-	log.Printf("review-api listening on %s", addr)
+	log.Printf("testflow-api listening on %s", addr)
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)

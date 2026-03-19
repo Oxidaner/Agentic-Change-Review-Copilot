@@ -2,16 +2,17 @@
 
 ## Current Reality
 
-The repository is now documented as:
+The repository now starts on the new testflow API surface.
 
-`Âü∫‰∫é Workflow Agent ÁöÑ AI Ëá™Âä®ÂåñÊµãËØïÂπ≥Âè∞`
+Default endpoints:
+- `POST /api/v1/test-tasks`
+- `GET /api/v1/test-tasks/{task_id}`
+- `GET /api/v1/test-tasks/{task_id}/timeline`
+- `POST /api/v1/test-tasks/{task_id}/retry`
+- `GET /api/v1/test-tasks/{task_id}/report`
+- `GET /api/v1/test-metrics`
 
-However, the current implementation is still a backend skeleton inherited from the previous review-oriented MVP. That is expected during this transition phase.
-
-Use the current runtime as:
-- a reusable workflow backend base
-- a persistence and API skeleton
-- a starting point for migrating into the AI testing platform flow
+The old `internal/review` package still exists in-tree as legacy code, but it is not the active entrypoint anymore.
 
 ## Start With Docker Compose
 
@@ -34,27 +35,25 @@ go test ./...
 go build ./...
 ```
 
-## Final Product Scope
+## Current Product Scope
 
-The final project scope is now fixed as:
+Current main line:
 
-`PR / ÈúÄÊ±ÇÂèòÊõ¥ -> ÊµãËØïÁÇπÊäΩÂèñ -> Áî®‰æãÁîüÊàê -> Â∑•ÂÖ∑ÊâßË°å -> Êô∫ËÉΩÊñ≠Ë®Ä -> Â§±Ë¥•ÂΩíÂõ† -> ÊµãËØïÊä•Âëä`
+`PR / –Ë«Û±‰∏¸ -> ≤‚ ‘µ„≥È»° -> ”√¿˝…˙≥… -> π§æﬂ÷¥–– -> ÷«ƒ‹∂œ—‘ ->  ß∞‹πÈ“Ú -> ≤‚ ‘±®∏Ê`
 
-Near-term implementation priority:
+Near-term priority order:
 - API regression testing first
 - Web UI core-path testing second
 
 ## Current Development Strategy
 
-Do not expand the current codebase in arbitrary directions.
+Recommended build order from here:
+1. integrate a real API test runner
+2. add PostgreSQL integration tests for `test_tasks`
+3. improve assertion generation and failure analysis
+4. remove or archive legacy `internal/review` code when no longer needed
 
-Use this migration order:
-1. migrate docs and API contract
-2. migrate domain naming and workflow states
-3. migrate persistence objects
-4. integrate real test execution tools
-
-## Current Example Startup Flow
+## Example Startup Flow
 
 ```bash
 docker compose up --build
@@ -64,4 +63,4 @@ go build ./...
 
 ## Important Note
 
-The current HTTP endpoints and request examples still reflect the older review-oriented implementation. They should be treated as transitional scaffolding until the API contract is rewritten around the AI testing workflow.
+The service binary path is still `cmd/review-api/` for now, but the runtime behavior and API contract have already switched to the new testflow model.

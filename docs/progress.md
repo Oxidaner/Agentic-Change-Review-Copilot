@@ -4,7 +4,7 @@
 
 The repository is now positioned as:
 
-`Âü∫‰∫é Workflow Agent ÁöÑ AI Ëá™Âä®ÂåñÊµãËØïÂπ≥Âè∞`
+`ª˘”⁄ Workflow Agent µƒ AI ◊‘∂ØªØ≤‚ ‘∆ΩÃ®`
 
 This should be understood as:
 - a workflow-first AI test automation runtime
@@ -13,34 +13,30 @@ This should be understood as:
 
 ## Current State
 
-The current codebase still contains review-oriented domain naming, but it already has reusable infrastructure that can be migrated into the test platform direction.
+The repository has already crossed the key migration line:
+- the active HTTP entrypoint now serves `testflow` semantics
+- the OpenAPI contract now exposes `test-tasks` endpoints
+- the new domain package is `internal/testflow`
+- the old `internal/review` package is still kept temporarily as legacy code, but it is no longer the default API path
 
-Reusable existing pieces:
+Current reusable pieces:
 - Go HTTP API skeleton
 - controlled workflow / state-machine style service flow
 - PostgreSQL persistence
-- evaluation feedback persistence
-- metrics API pattern
 - Docker local startup
-- OpenAPI contract workflow
+- OpenAPI contract
 - basic automated tests
-
-What is not migrated yet:
-- review domain model -> test task domain model
-- review API semantics -> test workflow API semantics
-- risk signal model -> test point / assertion / failure analysis model
-- actual test tool integrations
 
 ## Final Product Direction
 
-The final product direction is now fixed as one clear main line:
+The final product direction is fixed as one clear main line:
 
-`PR / ÈúÄÊ±ÇÂèòÊõ¥ -> ÊµãËØïÁÇπÊäΩÂèñ -> Áî®‰æãÁîüÊàê -> Â∑•ÂÖ∑ÊâßË°å -> Êô∫ËÉΩÊñ≠Ë®Ä -> Â§±Ë¥•ÂΩíÂõ† -> ÊµãËØïÊä•Âëä`
+`PR / –Ë«Û±‰∏¸ -> ≤‚ ‘µ„≥È»° -> ”√¿˝…˙≥… -> π§æﬂ÷¥–– -> ÷«ƒ‹∂œ—‘ ->  ß∞‹πÈ“Ú -> ≤‚ ‘±®∏Ê`
 
-This means future implementation work should optimize for:
-- API regression testing first
-- Web UI core-path testing second
-- controlled workflow rather than free-form agent planning
+Near-term scope order:
+- Phase 1: PR-driven API regression testing
+- Phase 2: Web UI core-path testing
+- Phase 3: mobile automation expansion
 
 ## Important Files
 
@@ -49,45 +45,37 @@ Design and handoff:
 - `docs/spec.md`
 - `docs/local-development.md`
 
-Current runtime and API skeleton:
+Current runtime and API:
 - `cmd/review-api/main.go`
 - `internal/api/handler.go`
 - `internal/api/handler_test.go`
-- `internal/review/service.go`
-- `internal/review/types.go`
-- `internal/review/postgres.go`
-- `internal/review/store.go`
+- `internal/testflow/service.go`
+- `internal/testflow/types.go`
+- `internal/testflow/postgres.go`
+- `internal/testflow/store.go`
 
 Contract and schema:
 - `openapi/openapi.yaml`
 - `migrations/*.sql`
 
-## Major Completed Commits Before The Narrative Switch
+## Key Recent Commits
 
-- `ca387dd` `feat: add review api skeleton and postgres store`
-- `93e043a` `feat: persist human decisions`
-- `53061f4` `chore: add local development setup`
-- `d77c182` `feat: persist evaluation records`
-- `f4740a5` `test: add api integration coverage`
-- `d1d17b1` `feat: add evaluation feedback endpoint`
-- `06db8e9` `docs: align openapi with evaluation endpoint`
-- `85d0a0a` `docs: add progress handoff notes`
-- `849d64d` `docs: refocus architecture narrative`
-- `1286fc2` `docs: sync documentation narrative`
+- `05fbe73` `feat: add testflow core domain`
+- `a665021` `feat: switch api to testflow workflow`
 
-These commits built the reusable backend skeleton, but they still use review-oriented naming.
+These two commits are the actual business pivot point from the old review MVP into the new test automation workflow.
 
-## What Should Happen Next
+## What Still Needs Work
 
 Highest priority:
-1. Rename and migrate the domain model from review semantics to AI test workflow semantics.
-2. Rewrite `openapi/openapi.yaml` around test workflow endpoints.
-3. Keep the implementation scope narrow: API regression test workflow first.
+1. Integrate a real API test runner instead of heuristic execution.
+2. Add PostgreSQL integration tests for the new `test_tasks` lifecycle.
+3. Add smarter assertion generation and failure analysis grounded in real artifacts.
 
 Second priority:
-1. Make runtime abstractions explicit: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
-2. Add PostgreSQL integration tests for the new test-task lifecycle.
-3. Add CLI output for JSON and Markdown test reports.
+1. Add a CLI or webhook adapter for PR-triggered task creation.
+2. Decide whether to delete or archive `internal/review` after the migration stabilizes.
+3. Make runtime abstractions more explicit: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
 
 ## Resume Checklist
 
@@ -96,10 +84,10 @@ If resuming on another machine:
 2. `docker compose up --build`
 3. `go test ./...`
 4. Read `docs/workflow_agent_ai_test_platform_design.md`
-5. Continue with domain model migration and OpenAPI rewrite
+5. Continue from real tool integration or PostgreSQL integration tests
 
 ## Notes
 
-- The code and docs are temporarily in a transition period.
-- The docs now describe the final target direction.
-- The code still reflects the previous review-oriented MVP skeleton and should be migrated incrementally, not thrown away.
+- `.idea/` is still untracked and intentionally untouched.
+- The codebase is no longer in the old "docs switched but API did not" state.
+- Remaining migration work is now mostly about deleting legacy code and replacing simulated execution with real tools.
