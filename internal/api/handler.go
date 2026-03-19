@@ -13,10 +13,17 @@ type Handler struct {
 	service *testflow.Service
 }
 
+// NewHandler returns the top-level HTTP handler for the testflow API.
+//
+// Routing is intentionally implemented with a small manual dispatcher because the
+// current MVP surface is limited and does not yet justify a larger routing
+// framework dependency.
 func NewHandler(service *testflow.Service) http.Handler {
 	return &Handler{service: service}
 }
 
+// ServeHTTP performs coarse path dispatch and delegates request-specific work to
+// smaller handler methods.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
 		h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -68,6 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// createTask validates and accepts a new test task request.
 func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
 	var req testflow.CreateTestTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,6 +95,7 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
+// getTask returns the latest materialized state of a test task.
 func (h *Handler) getTask(w http.ResponseWriter, taskID string) {
 	resp, err := h.service.GetTask(taskID)
 	if err != nil {
@@ -96,6 +105,7 @@ func (h *Handler) getTask(w http.ResponseWriter, taskID string) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
+// getTimeline returns the ordered state transition history for a task.
 func (h *Handler) getTimeline(w http.ResponseWriter, taskID string) {
 	resp, err := h.service.GetTimeline(taskID)
 	if err != nil {
@@ -105,6 +115,7 @@ func (h *Handler) getTimeline(w http.ResponseWriter, taskID string) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
+// retryTask replays a previously failed task by reusing the same task_id.
 func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	var req testflow.RetryTaskRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
@@ -117,6 +128,7 @@ func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request, taskID strin
 	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
+// exportReport renders a task result as markdown or JSON for downstream sharing.
 func (h *Handler) exportReport(w http.ResponseWriter, r *http.Request, taskID string) {
 	format := r.URL.Query().Get("format")
 	if format == "" {
@@ -133,6 +145,7 @@ func (h *Handler) exportReport(w http.ResponseWriter, r *http.Request, taskID st
 	_, _ = w.Write(body)
 }
 
+// getMetrics exposes aggregated metrics over a time window.
 func (h *Handler) getMetrics(w http.ResponseWriter, r *http.Request) {
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
@@ -150,6 +163,7 @@ func (h *Handler) getMetrics(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
+// writeServiceError maps domain/store errors onto HTTP responses.
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, testflow.ErrNotFound):
@@ -161,12 +175,14 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
+// writeJSON standardizes JSON responses for successful and error flows.
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+// writeError emits the common API error envelope.
 func (h *Handler) writeError(w http.ResponseWriter, status int, code, message string) {
 	h.writeJSON(w, status, testflow.ErrorResponse{Code: code, Message: message})
 }

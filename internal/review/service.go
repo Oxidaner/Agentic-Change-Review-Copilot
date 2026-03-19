@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,15 +11,22 @@ import (
 
 var ErrConflict = errors.New("conflict")
 
+// Service owns the review workflow and persistence coordination.
+//
+// It is intentionally state-light: all durable workflow state is kept in the
+// Store, while the service focuses on deterministic orchestration.
 type Service struct {
 	store   Store
 	counter atomic.Uint64
 }
 
+// NewService constructs the review application service.
 func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
+// CreateReview accepts a new review request, applies idempotency, runs the
+// current in-process pipeline, and persists the resulting record.
 func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, error) {
 	dedupeKey := dedupeKeyFor(req)
 	if dedupeKey != "" {
@@ -103,6 +109,7 @@ func (s *Service) CreateReview(req CreateReviewRequest) (CreateReviewResponse, e
 	}, nil
 }
 
+// GetReview returns the latest assembled review response.
 func (s *Service) GetReview(reviewID string) (GetReviewResponse, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -118,6 +125,7 @@ func (s *Service) GetReview(reviewID string) (GetReviewResponse, error) {
 	}, nil
 }
 
+// GetTimeline returns the event timeline for a review.
 func (s *Service) GetTimeline(reviewID string) (TimelineResponse, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -130,6 +138,8 @@ func (s *Service) GetTimeline(reviewID string) (TimelineResponse, error) {
 	}, nil
 }
 
+// SubmitHumanDecision persists an explicit human outcome and updates the review
+// state to the terminal status implied by that decision.
 func (s *Service) SubmitHumanDecision(reviewID string, req HumanDecisionRequest) (HumanDecisionResponse, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -182,6 +192,8 @@ func (s *Service) SubmitHumanDecision(reviewID string, req HumanDecisionRequest)
 	}, nil
 }
 
+// RetryReview replays the pipeline for a failed review while preserving the
+// original identifiers and history.
 func (s *Service) RetryReview(reviewID string, _ RetryRequest) (RetryResponse, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -220,6 +232,8 @@ func (s *Service) RetryReview(reviewID string, _ RetryRequest) (RetryResponse, e
 	}, nil
 }
 
+// ExportReview renders the current review either as JSON or a simple markdown
+// report suitable for copy/paste sharing.
 func (s *Service) ExportReview(reviewID, format string) ([]byte, string, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -260,6 +274,8 @@ func (s *Service) ExportReview(reviewID, format string) ([]byte, string, error) 
 	return []byte(body), "text/markdown", nil
 }
 
+// UpdateEvaluation records post-release feedback that can later be aggregated into
+// coarse evaluation metrics.
 func (s *Service) UpdateEvaluation(reviewID string, req EvaluationUpdateRequest) (EvaluationUpdateResponse, error) {
 	record, err := s.store.Get(reviewID)
 	if err != nil {
@@ -296,6 +312,8 @@ func (s *Service) UpdateEvaluation(reviewID string, req EvaluationUpdateRequest)
 	return EvaluationUpdateResponse{ReviewID: reviewID, Recorded: true}, nil
 }
 
+// GetEvaluationMetrics computes simple aggregate metrics directly from stored
+// records. This is intentionally lightweight and in-process for the MVP.
 func (s *Service) GetEvaluationMetrics(from, to, service string) (EvaluationMetricsResponse, error) {
 	start, err := time.Parse("2006-01-02", from)
 	if err != nil {
@@ -361,40 +379,39 @@ func (s *Service) GetEvaluationMetrics(from, to, service string) (EvaluationMetr
 	}, nil
 }
 
+// runPipeline executes the current fixed workflow for a review.
+//
+// The implementation mirrors the target product stages even though each stage is
+// still heuristic today. This keeps the code ready for future extraction into
+// dedicated ingestion, retrieval, rule, and recommendation modules.
 func (s *Service) runPipeline(record Record, req CreateReviewRequest) Record {
-	record = s.transition(record, StatusNormalized, "payload normalized")
-	record = s.transition(record, StatusUnderstood, "change intent understood")
-	record = s.transition(record, StatusCollectingContext, "context retrieval simulated")
-	record = s.transition(record, StatusContextReady, "context ready")
+	bundle := normalizeChange(req, record.Review.CreatedAt)
+	record.Bundle = &bundle
+	record = s.transition(record, StatusNormalized, "change normalized into ChangeBundle")
 
-	evidence := []EvidenceItem{
-		{
-			EvidenceID:     s.nextID("ev"),
-			Type:           "heuristic",
-			Source:         "rule_engine",
-			Title:          "MVP rule evaluation",
-			ContentSnippet: "Signals generated from source type, environment, and service heuristics.",
-			Confidence:     0.86,
-			Metadata: map[string]any{
-				"source_type": req.SourceType,
-				"environment": req.Environment,
-			},
-		},
-	}
+	understanding := understandChange(bundle)
+	record.Understanding = &understanding
+	record = s.transition(record, StatusUnderstood, "change understanding completed")
+	record = s.transition(record, StatusCollectingContext, "collecting supporting evidence")
 
-	signals, score := s.generateSignals(req, evidence[0].EvidenceID)
+	evidencePack := collectEvidence(bundle, understanding, s.nextID)
+	record.Evidence = evidencePack.Items
+	record = s.transition(record, StatusContextReady, fmt.Sprintf("%d evidence item(s) collected", len(record.Evidence)))
+
+	signals, _ := extractRiskSignals(bundle, understanding, evidencePack, s.nextID)
 	record.Signals = signals
-	record.Evidence = evidence
 	record = s.transition(record, StatusSignalsExtracted, fmt.Sprintf("%d risk signals extracted", len(signals)))
-	record.Review.Score = min(score, 100)
-	record.Review.RiskLevel = scoreToRiskLevel(record.Review.Score)
-	record.Review.Confidence = confidenceFor(record.Review.RiskLevel)
+
+	score := scoreReview(signals)
+	record.Review.Score = score.Score
+	record.Review.RiskLevel = score.RiskLevel
+	record.Review.Confidence = score.Confidence
+	record.Review.HumanReviewRequired = score.HumanReviewRequired
 	record = s.transition(record, StatusScored, fmt.Sprintf("risk score=%d", record.Review.Score))
 
-	record.Recommendation = recommendationFor(record.Review)
-	record.RollbackPlan = rollbackPlanFor(req)
-	record.Review.HumanReviewRequired = record.Review.RiskLevel == RiskHigh || record.Review.RiskLevel == RiskCritical
-	record.Review.Summary = summaryFor(req, record.Signals, record.Review)
+	record.Recommendation = buildRecommendation(bundle, understanding, score)
+	record.RollbackPlan = buildRollbackPlan(req, bundle)
+	record.Review.Summary = buildReviewSummary(bundle, understanding, score, record.Signals)
 	if record.Evaluation != nil {
 		record.Evaluation.UpdatedAt = record.Review.UpdatedAt
 		if record.Evaluation.OutcomeMetadata == nil {
@@ -403,16 +420,17 @@ func (s *Service) runPipeline(record Record, req CreateReviewRequest) Record {
 		record.Evaluation.OutcomeMetadata["risk_level"] = record.Review.RiskLevel
 		record.Evaluation.OutcomeMetadata["score"] = record.Review.Score
 	}
+	record = s.transition(record, StatusRecommended, "structured recommendation generated")
 
 	if record.Review.HumanReviewRequired {
-		record = s.transition(record, StatusWaitingHumanReview, "high risk review requires human approval")
+		record = s.transition(record, StatusWaitingHumanReview, "human review required based on risk or confidence")
 		return record
 	}
 
-	record = s.transition(record, StatusRecommended, "automated recommendation ready")
 	return record
 }
 
+// transition appends a timeline event and updates the review's current status.
 func (s *Service) transition(record Record, status ReviewStatus, detail string) Record {
 	now := time.Now().UTC()
 	record.Review.Status = status
@@ -421,117 +439,7 @@ func (s *Service) transition(record Record, status ReviewStatus, detail string) 
 	return record
 }
 
-func (s *Service) generateSignals(req CreateReviewRequest, evidenceID string) ([]RiskSignal, int) {
-	signals := make([]RiskSignal, 0, 4)
-	score := 10
-
-	addSignal := func(name string, severity RiskLevel, delta int, explanation string) {
-		signals = append(signals, RiskSignal{
-			SignalID:     s.nextID("sig"),
-			SignalName:   name,
-			Severity:     severity,
-			ScoreDelta:   delta,
-			Explanation:  explanation,
-			EvidenceRefs: []string{evidenceID},
-		})
-		score += delta
-	}
-
-	switch req.SourceType {
-	case "sql_migration":
-		addSignal("sql_schema_change", RiskHigh, 30, "SQL migration changes are treated as high-impact in the MVP rule set.")
-	case "k8s_diff":
-		addSignal("runtime_config_changed", RiskMedium, 18, "Kubernetes configuration changes can affect runtime stability.")
-	case "terraform_plan":
-		addSignal("infrastructure_change", RiskHigh, 24, "Infrastructure plan changes can have broad blast radius.")
-	case "gateway_config":
-		addSignal("gateway_routing_changed", RiskHigh, 26, "Gateway routing and auth changes affect entry traffic.")
-	default:
-		addSignal("application_code_change", RiskMedium, 14, "Code changes require standard review and rollout checks.")
-	}
-
-	if strings.EqualFold(req.Environment, "prod") || strings.Contains(strings.ToLower(req.Environment), "prod") {
-		addSignal("production_release", RiskHigh, 20, "Production deployments receive additional risk weighting.")
-	}
-
-	serviceTokens := []string{"auth", "payment", "gateway", "billing"}
-	serviceName := strings.ToLower(req.Service + " " + req.Repo + " " + req.Payload.Title)
-	for _, token := range serviceTokens {
-		if strings.Contains(serviceName, token) {
-			addSignal("critical_path_component", RiskHigh, 18, "Critical service path detected in review metadata.")
-			break
-		}
-	}
-
-	fileList := metadataStringSlice(req.Payload.Metadata, "file_list")
-	if slices.ContainsFunc(fileList, func(item string) bool {
-		lower := strings.ToLower(item)
-		return strings.Contains(lower, "migration") || strings.Contains(lower, "ingress") || strings.Contains(lower, "routes")
-	}) {
-		addSignal("sensitive_artifact_changed", RiskMedium, 12, "Sensitive config or migration artifact found in payload metadata.")
-	}
-
-	return signals, score
-}
-
-func recommendationFor(review Review) Recommendation {
-	reviewers := []string{"release-manager"}
-	if review.HumanReviewRequired {
-		reviewers = append(reviewers, "service-owner")
-	}
-
-	window := "business hours"
-	if review.Environment == "prod" {
-		window = "low-traffic release window"
-	}
-
-	return Recommendation{
-		RequiredReviewers: reviewers,
-		ReleaseWindow:     window,
-		RolloutStrategy: RolloutStrategy{
-			Steps: []string{
-				"Deploy to canary slice",
-				"Observe key indicators for 10 minutes",
-				"Expand to 25%, then 100% if stable",
-			},
-			IntervalMinutes: 10,
-		},
-		ObservabilityPlan: []string{
-			"error_rate",
-			"latency_p95",
-			"saturation_cpu",
-		},
-	}
-}
-
-func rollbackPlanFor(req CreateReviewRequest) RollbackPlan {
-	return RollbackPlan{
-		TriggerCondition: "error rate or latency regression exceeds threshold",
-		Steps: []string{
-			"Stop rollout progression",
-			"Restore previous stable artifact or config",
-			"Verify health checks and core business flow",
-		},
-		VersionToRestore:       req.Payload.BaseCommit,
-		VerificationMetrics:    []string{"error_rate", "latency_p95", "success_rate"},
-		RollbackDeadlineSecond: 900,
-	}
-}
-
-func summaryFor(req CreateReviewRequest, signals []RiskSignal, review Review) string {
-	if len(signals) == 0 {
-		return "No meaningful risk signals detected."
-	}
-	return fmt.Sprintf(
-		"%s change for %s in %s produced %d signal(s); highest assessed risk is %s.",
-		req.SourceType,
-		firstNonEmpty(req.Service, req.Repo, req.SourceID),
-		req.Environment,
-		len(signals),
-		review.RiskLevel,
-	)
-}
-
+// confidenceFor returns the heuristic confidence attached to a risk level.
 func confidenceFor(level RiskLevel) float64 {
 	switch level {
 	case RiskCritical:
@@ -541,10 +449,11 @@ func confidenceFor(level RiskLevel) float64 {
 	case RiskMedium:
 		return 0.78
 	default:
-		return 0.70
+		return 0.76
 	}
 }
 
+// scoreToRiskLevel maps a numeric score onto a coarse severity bucket.
 func scoreToRiskLevel(score int) RiskLevel {
 	switch {
 	case score >= 80:
@@ -558,28 +467,7 @@ func scoreToRiskLevel(score int) RiskLevel {
 	}
 }
 
-func metadataStringSlice(metadata map[string]any, key string) []string {
-	if metadata == nil {
-		return nil
-	}
-	value, ok := metadata[key]
-	if !ok {
-		return nil
-	}
-	raw, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		text, ok := item.(string)
-		if ok {
-			out = append(out, text)
-		}
-	}
-	return out
-}
-
+// firstNonEmpty returns the first non-empty value from a list of candidates.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -589,11 +477,14 @@ func firstNonEmpty(values ...string) string {
 	return "unknown target"
 }
 
+// stringPtr is a small helper used by persistence code that stores optional strings.
 func stringPtr(value string) *string {
 	v := value
 	return &v
 }
 
+// dedupeKeyFor computes the idempotency key used to avoid duplicate review
+// creation for the same source and head revision.
 func dedupeKeyFor(req CreateReviewRequest) string {
 	if req.DedupeKey != "" {
 		return req.DedupeKey
@@ -604,6 +495,8 @@ func dedupeKeyFor(req CreateReviewRequest) string {
 	return strings.ToLower(fmt.Sprintf("%s:%s:%s:%s", req.SourceType, req.SourceID, req.Payload.HeadCommit, req.Environment))
 }
 
+// requestFromRecord reconstructs a request from a persisted record when retrying
+// older data that may not have the original request object in memory.
 func requestFromRecord(record Record) CreateReviewRequest {
 	if record.Request != nil {
 		return *record.Request
@@ -622,6 +515,7 @@ func requestFromRecord(record Record) CreateReviewRequest {
 	}
 }
 
+// nextID generates monotonic in-process identifiers for review-related entities.
 func (s *Service) nextID(prefix string) string {
 	seq := s.counter.Add(1)
 	return fmt.Sprintf("%s_%d", prefix, seq)

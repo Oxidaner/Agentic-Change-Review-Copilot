@@ -20,10 +20,15 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
+// NewPostgresStore wraps a sql.DB with the Store interface expected by the service.
 func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
+// RunMigrations executes all *.up.sql files in lexical order.
+//
+// This keeps local startup simple for the MVP. In a larger deployment this logic
+// would usually be delegated to a dedicated migration tool or release step.
 func RunMigrations(db *sql.DB, dir string) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
 	if err != nil {
@@ -43,6 +48,8 @@ func RunMigrations(db *sql.DB, dir string) error {
 	return nil
 }
 
+// Save persists the full review aggregate in a single transaction so the API
+// never exposes partially-updated workflow state.
 func (s *PostgresStore) Save(record Record) error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -85,6 +92,8 @@ func (s *PostgresStore) Save(record Record) error {
 	return tx.Commit()
 }
 
+// Get reconstructs a full Record aggregate by reading the normalized review row
+// and its related tables.
 func (s *PostgresStore) Get(reviewID string) (Record, error) {
 	ctx := context.Background()
 	var record Record
@@ -276,6 +285,10 @@ func (s *PostgresStore) Get(reviewID string) (Record, error) {
 	return record, nil
 }
 
+// List loads all reviews by ID and reuses Get to assemble complete records.
+//
+// This is simple but not optimized; it is sufficient for MVP-scale metric
+// computation and administrative inspection.
 func (s *PostgresStore) List() []Record {
 	ctx := context.Background()
 	rows, err := s.db.QueryContext(ctx, `SELECT review_id FROM reviews ORDER BY created_at DESC`)
@@ -298,6 +311,7 @@ func (s *PostgresStore) List() []Record {
 	return out
 }
 
+// FindByDedupeKey supports idempotent review creation.
 func (s *PostgresStore) FindByDedupeKey(dedupeKey string) (Record, error) {
 	ctx := context.Background()
 	var reviewID string
@@ -313,6 +327,7 @@ func (s *PostgresStore) FindByDedupeKey(dedupeKey string) (Record, error) {
 	return s.Get(reviewID)
 }
 
+// upsertReview stores the top-level review summary row.
 func upsertReview(ctx context.Context, tx *sql.Tx, record Record) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO reviews (
@@ -361,6 +376,7 @@ func upsertReview(ctx context.Context, tx *sql.Tx, record Record) error {
 	return err
 }
 
+// replaceTask rewrites the current task row that tracks the workflow's state.
 func replaceTask(ctx context.Context, tx *sql.Tx, record Record) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO review_tasks (
@@ -386,6 +402,8 @@ func replaceTask(ctx context.Context, tx *sql.Tx, record Record) error {
 	return err
 }
 
+// replaceChangeSnapshot stores the normalized request payload plus semantic tags
+// and touched files derived during pipeline execution.
 func replaceChangeSnapshot(ctx context.Context, tx *sql.Tx, record Record) error {
 	if record.Request == nil {
 		return nil
@@ -397,14 +415,20 @@ func replaceChangeSnapshot(ctx context.Context, tx *sql.Tx, record Record) error
 	}
 
 	var fileList []string
-	if record.Request.Payload.Metadata != nil {
+	if record.Bundle != nil {
+		fileList = record.Bundle.FileList
+	} else if record.Request.Payload.Metadata != nil {
 		fileList = metadataStringSlice(record.Request.Payload.Metadata, "file_list")
 	}
 	fileListJSON, err := json.Marshal(fileList)
 	if err != nil {
 		return err
 	}
-	semanticTagsJSON, err := json.Marshal([]string{record.Request.SourceType})
+	semanticTags := []string{record.Request.SourceType}
+	if record.Understanding != nil && len(record.Understanding.SemanticTags) > 0 {
+		semanticTags = record.Understanding.SemanticTags
+	}
+	semanticTagsJSON, err := json.Marshal(semanticTags)
 	if err != nil {
 		return err
 	}
@@ -428,6 +452,7 @@ func replaceChangeSnapshot(ctx context.Context, tx *sql.Tx, record Record) error
 	return err
 }
 
+// replaceEvidence refreshes the evidence set for the review.
 func replaceEvidence(ctx context.Context, tx *sql.Tx, record Record) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM evidence_items WHERE review_id = $1`, record.Review.ReviewID); err != nil {
 		return err
@@ -458,6 +483,7 @@ func replaceEvidence(ctx context.Context, tx *sql.Tx, record Record) error {
 	return nil
 }
 
+// replaceSignals refreshes the extracted risk signals for the review.
 func replaceSignals(ctx context.Context, tx *sql.Tx, record Record) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM risk_signals WHERE review_id = $1`, record.Review.ReviewID); err != nil {
 		return err
@@ -486,6 +512,7 @@ func replaceSignals(ctx context.Context, tx *sql.Tx, record Record) error {
 	return nil
 }
 
+// replaceRecommendation stores the recommendation and rollback payloads.
 func replaceRecommendation(ctx context.Context, tx *sql.Tx, record Record) error {
 	recommendationJSON, err := json.Marshal(record.Recommendation)
 	if err != nil {
@@ -518,6 +545,7 @@ func replaceRecommendation(ctx context.Context, tx *sql.Tx, record Record) error
 	return err
 }
 
+// replaceAuditEvents stores the materialized timeline as append-only style events.
 func replaceAuditEvents(ctx context.Context, tx *sql.Tx, record Record) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_events WHERE review_id = $1`, record.Review.ReviewID); err != nil {
 		return err
@@ -537,6 +565,7 @@ func replaceAuditEvents(ctx context.Context, tx *sql.Tx, record Record) error {
 	return nil
 }
 
+// replaceHumanDecisions refreshes the persisted reviewer decisions attached to the review.
 func replaceHumanDecisions(ctx context.Context, tx *sql.Tx, record Record) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM human_decisions WHERE review_id = $1`, record.Review.ReviewID); err != nil {
 		return err
@@ -559,6 +588,7 @@ func replaceHumanDecisions(ctx context.Context, tx *sql.Tx, record Record) error
 	return nil
 }
 
+// replaceEvaluation upserts post-release evaluation data.
 func replaceEvaluation(ctx context.Context, tx *sql.Tx, record Record) error {
 	if record.Evaluation == nil {
 		return nil
@@ -603,6 +633,7 @@ func replaceEvaluation(ctx context.Context, tx *sql.Tx, record Record) error {
 	return err
 }
 
+// nullIfEmpty converts empty strings into SQL NULL semantics.
 func nullIfEmpty(value string) any {
 	if value == "" {
 		return nil
@@ -610,6 +641,7 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
+// nullStringPtr converts an optional string pointer to a nullable SQL value.
 func nullStringPtr(value *string) any {
 	if value == nil || *value == "" {
 		return nil
@@ -617,6 +649,7 @@ func nullStringPtr(value *string) any {
 	return *value
 }
 
+// nullBoolPtr converts an optional bool pointer to a nullable SQL value.
 func nullBoolPtr(value *bool) any {
 	if value == nil {
 		return nil
@@ -624,6 +657,7 @@ func nullBoolPtr(value *bool) any {
 	return *value
 }
 
+// jsonOrObject ensures JSONB object columns never receive null/empty payloads.
 func jsonOrObject(value []byte) []byte {
 	if len(value) == 0 || string(value) == "null" {
 		return []byte("{}")
@@ -631,6 +665,7 @@ func jsonOrObject(value []byte) []byte {
 	return value
 }
 
+// jsonOrArray ensures JSONB array columns never receive null/empty payloads.
 func jsonOrArray(value []byte) []byte {
 	if len(value) == 0 || string(value) == "null" {
 		return []byte("[]")
@@ -638,6 +673,7 @@ func jsonOrArray(value []byte) []byte {
 	return value
 }
 
+// finishedAtFor materializes terminal timestamps for workflow bookkeeping.
 func finishedAtFor(status ReviewStatus, at time.Time) any {
 	switch status {
 	case StatusApproved, StatusRejected, StatusOverridden, StatusFailed, StatusRecommended, StatusWaitingHumanReview:
@@ -647,10 +683,12 @@ func finishedAtFor(status ReviewStatus, at time.Time) any {
 	}
 }
 
+// canRelease maps a final status into the coarse can_release flag stored in SQL.
 func canRelease(status ReviewStatus) bool {
 	return status == StatusApproved || status == StatusRecommended || status == StatusOverridden
 }
 
+// isAlreadyExistsError tolerates rerunning migrations that create existing objects.
 func isAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
@@ -659,6 +697,7 @@ func isAlreadyExistsError(err error) bool {
 	return strings.Contains(text, "already exists")
 }
 
+// isDedupeConflict detects unique-index violations on the dedupe key.
 func isDedupeConflict(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
