@@ -14,10 +14,13 @@ type Service struct {
 	counter atomic.Uint64
 }
 
+// NewService constructs the application service that owns the testflow workflow.
 func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
+// CreateTask accepts a new task request, applies idempotency, runs the current
+// in-process workflow, and persists the resulting aggregate.
 func (s *Service) CreateTask(req CreateTestTaskRequest) (CreateTestTaskResponse, error) {
 	dedupeKey := dedupeKeyFor(req)
 	if dedupeKey != "" {
@@ -83,6 +86,7 @@ func (s *Service) CreateTask(req CreateTestTaskRequest) (CreateTestTaskResponse,
 	}, nil
 }
 
+// GetTask returns the latest assembled view of a task and all generated artifacts.
 func (s *Service) GetTask(taskID string) (GetTestTaskResponse, error) {
 	record, err := s.store.Get(taskID)
 	if err != nil {
@@ -100,6 +104,7 @@ func (s *Service) GetTask(taskID string) (GetTestTaskResponse, error) {
 	}, nil
 }
 
+// GetTimeline returns the state transition history for a task.
 func (s *Service) GetTimeline(taskID string) (TimelineResponse, error) {
 	record, err := s.store.Get(taskID)
 	if err != nil {
@@ -108,6 +113,7 @@ func (s *Service) GetTimeline(taskID string) (TimelineResponse, error) {
 	return TimelineResponse{TaskID: taskID, Events: record.Timeline}, nil
 }
 
+// RetryTask replays a failed or manually-blocked task while reusing the same ID.
 func (s *Service) RetryTask(taskID string, _ RetryTaskRequest) (RetryTaskResponse, error) {
 	record, err := s.store.Get(taskID)
 	if err != nil {
@@ -137,6 +143,7 @@ func (s *Service) RetryTask(taskID string, _ RetryTaskRequest) (RetryTaskRespons
 	return RetryTaskResponse{TaskID: taskID, Status: record.Task.Status}, nil
 }
 
+// ExportReport renders a task either as JSON or a simple markdown report.
 func (s *Service) ExportReport(taskID, format string) ([]byte, string, error) {
 	record, err := s.store.Get(taskID)
 	if err != nil {
@@ -180,6 +187,7 @@ func (s *Service) ExportReport(taskID, format string) ([]byte, string, error) {
 	return []byte(body), "text/markdown", nil
 }
 
+// GetMetrics computes lightweight aggregate metrics directly from stored task records.
 func (s *Service) GetMetrics(from, to, scenario string) (MetricsResponse, error) {
 	start, err := time.Parse("2006-01-02", from)
 	if err != nil {
@@ -245,6 +253,10 @@ func (s *Service) GetMetrics(from, to, scenario string) (MetricsResponse, error)
 	}, nil
 }
 
+// runPipeline executes the fixed MVP workflow for a single task.
+//
+// Each stage appends timeline events and materializes intermediate artifacts so
+// later API reads do not need to rerun any business logic.
 func (s *Service) runPipeline(record Record, req CreateTestTaskRequest) Record {
 	record = s.transition(record, StatusParseChange, "change payload normalized")
 	evidenceRef := "change:" + firstNonEmpty(req.Payload.HeadCommit, req.SourceID, record.Task.TaskID)
@@ -278,6 +290,7 @@ func (s *Service) runPipeline(record Record, req CreateTestTaskRequest) Record {
 	return s.transition(record, StatusDone, "workflow completed")
 }
 
+// transition appends a timeline event and updates the current task status.
 func (s *Service) transition(record Record, status TaskStatus, detail string) Record {
 	now := time.Now().UTC()
 	record.Task.Status = status
@@ -286,6 +299,7 @@ func (s *Service) transition(record Record, status TaskStatus, detail string) Re
 	return record
 }
 
+// generateTestPoints derives the key validation angles from the incoming change metadata.
 func (s *Service) generateTestPoints(req CreateTestTaskRequest, evidenceRef string) []TestPoint {
 	points := []TestPoint{{
 		PointID:      s.nextID("tp"),
@@ -317,6 +331,7 @@ func (s *Service) generateTestPoints(req CreateTestTaskRequest, evidenceRef stri
 	return points
 }
 
+// generateTestCases materializes executable cases from the generated test points.
 func (s *Service) generateTestCases(points []TestPoint) []TestCase {
 	cases := make([]TestCase, 0, len(points))
 	for _, point := range points {
@@ -344,6 +359,10 @@ func (s *Service) generateTestCases(points []TestPoint) []TestCase {
 	return cases
 }
 
+// executeTestCases simulates the current tool execution stage.
+//
+// The MVP uses deterministic heuristics so the API remains runnable without any
+// real execution infrastructure.
 func (s *Service) executeTestCases(req CreateTestTaskRequest, cases []TestCase) []ExecutionResult {
 	results := make([]ExecutionResult, 0, len(cases))
 	context := strings.ToLower(strings.Join([]string{req.Service, req.Repo, req.Payload.Title, req.Payload.Description}, " "))
@@ -370,6 +389,7 @@ func (s *Service) executeTestCases(req CreateTestTaskRequest, cases []TestCase) 
 	return results
 }
 
+// assertResults collapses raw execution outcomes into a higher-level assertion judgment.
 func (s *Service) assertResults(results []ExecutionResult) AssertionResult {
 	if len(results) == 0 {
 		return AssertionResult{Status: ExecutionNeedsAttention, Summary: "no executable test case was produced"}
@@ -401,6 +421,8 @@ func (s *Service) assertResults(results []ExecutionResult) AssertionResult {
 	return outcome
 }
 
+// analyzeFailures produces the workflow's best-effort explanation for failures
+// or ambiguous results.
 func (s *Service) analyzeFailures(req CreateTestTaskRequest, results []ExecutionResult, assertion AssertionResult) FailureAnalysis {
 	if assertion.Status == ExecutionPassed {
 		return FailureAnalysis{
@@ -434,6 +456,7 @@ func (s *Service) analyzeFailures(req CreateTestTaskRequest, results []Execution
 	}
 }
 
+// buildReport assembles the final task summary returned by the API.
 func (s *Service) buildReport(record Record) TestReport {
 	report := TestReport{
 		OverallStatus: record.AssertionResult.Status,
@@ -455,6 +478,7 @@ func (s *Service) buildReport(record Record) TestReport {
 	return report
 }
 
+// defaultScenario provides a stable fallback scenario classification.
 func defaultScenario(req CreateTestTaskRequest) string {
 	if req.Scenario != "" {
 		return req.Scenario
@@ -462,6 +486,7 @@ func defaultScenario(req CreateTestTaskRequest) string {
 	return "api_regression"
 }
 
+// dedupeKeyFor computes the idempotency key used to avoid duplicate task creation.
 func dedupeKeyFor(req CreateTestTaskRequest) string {
 	if req.DedupeKey != "" {
 		return req.DedupeKey
@@ -472,6 +497,7 @@ func dedupeKeyFor(req CreateTestTaskRequest) string {
 	return strings.ToLower(fmt.Sprintf("%s:%s:%s", req.InputType, req.SourceID, req.Payload.HeadCommit))
 }
 
+// requestFromRecord reconstructs a request when retrying a persisted task.
 func requestFromRecord(record Record) CreateTestTaskRequest {
 	if record.Request != nil {
 		return *record.Request
@@ -486,6 +512,7 @@ func requestFromRecord(record Record) CreateTestTaskRequest {
 	}
 }
 
+// collectCaseRefs gathers case identifiers for results with a matching status.
 func collectCaseRefs(results []ExecutionResult, status ExecutionStatus) []string {
 	refs := make([]string, 0, len(results))
 	for _, result := range results {
@@ -496,6 +523,7 @@ func collectCaseRefs(results []ExecutionResult, status ExecutionStatus) []string
 	return refs
 }
 
+// confidenceFor assigns a heuristic confidence to the workflow outcome.
 func confidenceFor(status ExecutionStatus) float64 {
 	switch status {
 	case ExecutionPassed:
@@ -507,6 +535,7 @@ func confidenceFor(status ExecutionStatus) float64 {
 	}
 }
 
+// safeRate guards simple ratio calculations against division by zero.
 func safeRate(numerator, denominator int) float64 {
 	if denominator == 0 {
 		return 0
@@ -514,6 +543,7 @@ func safeRate(numerator, denominator int) float64 {
 	return float64(numerator) / float64(denominator)
 }
 
+// firstNonEmpty returns the first populated string from a list of candidates.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -523,6 +553,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// nextID generates monotonic in-process identifiers for task artifacts.
 func (s *Service) nextID(prefix string) string {
 	seq := s.counter.Add(1)
 	return fmt.Sprintf("%s_%d", prefix, seq)

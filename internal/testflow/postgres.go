@@ -18,10 +18,12 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
+// NewPostgresStore wraps sql.DB with the Store interface expected by the service.
 func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
+// RunMigrations executes all *.up.sql files in lexical order.
 func RunMigrations(db *sql.DB, dir string) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
 	if err != nil {
@@ -41,6 +43,10 @@ func RunMigrations(db *sql.DB, dir string) error {
 	return nil
 }
 
+// Save persists the full task aggregate in a single row backed by JSONB columns.
+//
+// This favors implementation speed for the MVP over highly normalized relational
+// modeling.
 func (s *PostgresStore) Save(record Record) error {
 	requestJSON, err := json.Marshal(record.Request)
 	if err != nil {
@@ -157,6 +163,7 @@ ON CONFLICT (task_id) DO UPDATE SET
 	return err
 }
 
+// Get loads a task aggregate by task ID.
 func (s *PostgresStore) Get(taskID string) (Record, error) {
 	row := s.db.QueryRowContext(context.Background(), `
 SELECT
@@ -188,6 +195,7 @@ WHERE task_id = $1
 	return scanRecord(row)
 }
 
+// List loads all task IDs and reconstructs each record via Get.
 func (s *PostgresStore) List() []Record {
 	rows, err := s.db.QueryContext(context.Background(), `SELECT task_id FROM test_tasks ORDER BY created_at DESC`)
 	if err != nil {
@@ -209,6 +217,7 @@ func (s *PostgresStore) List() []Record {
 	return records
 }
 
+// FindByDedupeKey supports idempotent task creation.
 func (s *PostgresStore) FindByDedupeKey(dedupeKey string) (Record, error) {
 	row := s.db.QueryRowContext(context.Background(), `
 SELECT
@@ -240,10 +249,12 @@ WHERE dedupe_key = $1
 	return scanRecord(row)
 }
 
+// rowScanner abstracts sql.Row and sql.Rows scanning behavior for scanRecord.
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// scanRecord reconstructs a Record aggregate from one selected database row.
 func scanRecord(scanner rowScanner) (Record, error) {
 	var (
 		record         Record
@@ -313,6 +324,7 @@ func scanRecord(scanner rowScanner) (Record, error) {
 	return record, nil
 }
 
+// nullIfEmpty converts empty strings into SQL NULL semantics.
 func nullIfEmpty(value string) any {
 	if value == "" {
 		return nil
@@ -320,6 +332,7 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
+// jsonOrObject ensures JSONB object columns never receive empty/null payloads.
 func jsonOrObject(value []byte) []byte {
 	if len(value) == 0 || string(value) == "null" {
 		return []byte("{}")
@@ -327,6 +340,7 @@ func jsonOrObject(value []byte) []byte {
 	return value
 }
 
+// jsonOrArray ensures JSONB array columns never receive empty/null payloads.
 func jsonOrArray(value []byte) []byte {
 	if len(value) == 0 || string(value) == "null" {
 		return []byte("[]")
@@ -334,6 +348,7 @@ func jsonOrArray(value []byte) []byte {
 	return value
 }
 
+// jsonOrObjectPtr unmarshals a JSON object payload into an optional typed pointer.
 func jsonOrObjectPtr[T any](payload []byte) *T {
 	if len(payload) == 0 || string(payload) == "null" || string(payload) == "{}" {
 		return nil
@@ -345,6 +360,7 @@ func jsonOrObjectPtr[T any](payload []byte) *T {
 	return &value
 }
 
+// jsonOrArrayValue unmarshals a JSON array payload into a typed slice.
 func jsonOrArrayValue[T any](payload []byte) []T {
 	if len(payload) == 0 || string(payload) == "null" {
 		return nil
@@ -356,6 +372,7 @@ func jsonOrArrayValue[T any](payload []byte) []T {
 	return value
 }
 
+// isAlreadyExistsError tolerates rerunning migrations that create existing objects.
 func isAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
@@ -363,6 +380,7 @@ func isAlreadyExistsError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
+// isUniqueViolation detects PostgreSQL unique-constraint errors for idempotency handling.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

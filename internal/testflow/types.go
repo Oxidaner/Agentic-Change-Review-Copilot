@@ -2,23 +2,37 @@ package testflow
 
 import "time"
 
+// TaskStatus tracks the lifecycle of the controlled testflow workflow.
 type TaskStatus string
 
 const (
-	StatusInit                TaskStatus = "INIT"
-	StatusParseChange         TaskStatus = "PARSE_CHANGE"
-	StatusExtractTestPoints   TaskStatus = "EXTRACT_TEST_POINTS"
-	StatusGenerateTestCases   TaskStatus = "GENERATE_TEST_CASES"
-	StatusPrepareEnv          TaskStatus = "PREPARE_ENV"
-	StatusExecuteTools        TaskStatus = "EXECUTE_TOOLS"
-	StatusSmartAssert         TaskStatus = "SMART_ASSERT"
-	StatusRootCauseAnalyze    TaskStatus = "ROOT_CAUSE_ANALYZE"
-	StatusGenerateReport      TaskStatus = "GENERATE_REPORT"
+	// StatusInit means the task was accepted and assigned an ID.
+	StatusInit TaskStatus = "INIT"
+	// StatusParseChange means the incoming change payload was normalized.
+	StatusParseChange TaskStatus = "PARSE_CHANGE"
+	// StatusExtractTestPoints means candidate validation angles were generated.
+	StatusExtractTestPoints TaskStatus = "EXTRACT_TEST_POINTS"
+	// StatusGenerateTestCases means executable test cases were produced.
+	StatusGenerateTestCases TaskStatus = "GENERATE_TEST_CASES"
+	// StatusPrepareEnv means the workflow prepared the execution environment.
+	StatusPrepareEnv TaskStatus = "PREPARE_ENV"
+	// StatusExecuteTools means tool-based test execution is in progress or done.
+	StatusExecuteTools TaskStatus = "EXECUTE_TOOLS"
+	// StatusSmartAssert means execution results were summarized into assertions.
+	StatusSmartAssert TaskStatus = "SMART_ASSERT"
+	// StatusRootCauseAnalyze means the workflow generated failure analysis output.
+	StatusRootCauseAnalyze TaskStatus = "ROOT_CAUSE_ANALYZE"
+	// StatusGenerateReport means the final report was assembled.
+	StatusGenerateReport TaskStatus = "GENERATE_REPORT"
+	// StatusHumanReviewRequired means automation stopped for manual triage.
 	StatusHumanReviewRequired TaskStatus = "HUMAN_REVIEW_REQUIRED"
-	StatusDone                TaskStatus = "DONE"
-	StatusFailed              TaskStatus = "FAILED"
+	// StatusDone means the workflow completed without further manual intervention.
+	StatusDone   TaskStatus = "DONE"
+	StatusFailed TaskStatus = "FAILED"
 )
 
+// ExecutionStatus is the normalized outcome used for test execution, assertions,
+// and overall report status.
 type ExecutionStatus string
 
 const (
@@ -28,6 +42,7 @@ const (
 	ExecutionNeedsAttention ExecutionStatus = "NEEDS_ATTENTION"
 )
 
+// CreateTestTaskRequest is the external API payload for starting a testflow task.
 type CreateTestTaskRequest struct {
 	InputType   string             `json:"input_type"`
 	SourceID    string             `json:"source_id"`
@@ -39,6 +54,8 @@ type CreateTestTaskRequest struct {
 	Payload     ChangeInputPayload `json:"payload"`
 }
 
+// ChangeInputPayload carries source-specific metadata that helps derive test
+// points and test cases.
 type ChangeInputPayload struct {
 	Title       string         `json:"title,omitempty"`
 	Author      string         `json:"author,omitempty"`
@@ -49,6 +66,7 @@ type ChangeInputPayload struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
+// CreateTestTaskResponse is returned once the task is accepted by the API.
 type CreateTestTaskResponse struct {
 	TaskID   string     `json:"task_id"`
 	Status   TaskStatus `json:"status"`
@@ -56,6 +74,7 @@ type CreateTestTaskResponse struct {
 	Scenario string     `json:"scenario"`
 }
 
+// TestTask is the top-level materialized summary exposed by the API.
 type TestTask struct {
 	TaskID              string          `json:"task_id"`
 	ChangeID            string          `json:"change_id,omitempty"`
@@ -73,6 +92,7 @@ type TestTask struct {
 	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
+// TestPoint captures one distinct validation angle extracted from the change.
 type TestPoint struct {
 	PointID      string   `json:"point_id"`
 	Name         string   `json:"name"`
@@ -81,6 +101,7 @@ type TestPoint struct {
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
 }
 
+// TestCase is the executable artifact generated from a test point.
 type TestCase struct {
 	CaseID         string         `json:"case_id"`
 	Title          string         `json:"title"`
@@ -92,12 +113,14 @@ type TestCase struct {
 	Tags           []string       `json:"tags,omitempty"`
 }
 
+// ExecutionArtifact references execution byproducts such as traces or logs.
 type ExecutionArtifact struct {
 	ArtifactType string `json:"artifact_type"`
 	Location     string `json:"location,omitempty"`
 	Snippet      string `json:"snippet,omitempty"`
 }
 
+// ExecutionResult records the outcome of running one generated test case.
 type ExecutionResult struct {
 	CaseID     string              `json:"case_id"`
 	ToolName   string              `json:"tool_name"`
@@ -107,6 +130,7 @@ type ExecutionResult struct {
 	Artifacts  []ExecutionArtifact `json:"artifacts,omitempty"`
 }
 
+// AssertionResult is the workflow's higher-level judgment over raw execution output.
 type AssertionResult struct {
 	Status        ExecutionStatus `json:"status"`
 	PassedCount   int             `json:"passed_count"`
@@ -115,6 +139,8 @@ type AssertionResult struct {
 	FalsePositive bool            `json:"false_positive"`
 }
 
+// FailureAnalysis stores the best-effort explanation generated for a failing or
+// ambiguous workflow run.
 type FailureAnalysis struct {
 	FailureType       string   `json:"failure_type,omitempty"`
 	ProbableRootCause string   `json:"probable_root_cause,omitempty"`
@@ -123,6 +149,7 @@ type FailureAnalysis struct {
 	NextAction        string   `json:"next_action,omitempty"`
 }
 
+// TestReport is the final user-facing task summary.
 type TestReport struct {
 	OverallStatus     ExecutionStatus `json:"overall_status"`
 	TotalCases        int             `json:"total_cases"`
@@ -132,6 +159,7 @@ type TestReport struct {
 	RecommendedAction string          `json:"recommended_action,omitempty"`
 }
 
+// GetTestTaskResponse is the aggregate response returned by GET /test-tasks/{id}.
 type GetTestTaskResponse struct {
 	Task             TestTask          `json:"task"`
 	TestPoints       []TestPoint       `json:"test_points,omitempty"`
@@ -142,37 +170,44 @@ type GetTestTaskResponse struct {
 	Report           TestReport        `json:"report"`
 }
 
+// TimelineEvent records one state transition or notable workflow event.
 type TimelineEvent struct {
 	State  TaskStatus `json:"state"`
 	At     time.Time  `json:"at"`
 	Detail string     `json:"detail,omitempty"`
 }
 
+// TimelineResponse returns the ordered event history for a task.
 type TimelineResponse struct {
 	TaskID string          `json:"task_id"`
 	Events []TimelineEvent `json:"events"`
 }
 
+// RetryTaskRequest captures optional operator context when replaying a task.
 type RetryTaskRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RetryTaskResponse returns the reused identifier and current status after retry.
 type RetryTaskResponse struct {
 	TaskID string     `json:"task_id"`
 	Status TaskStatus `json:"status"`
 }
 
+// MetricsResponse is the aggregate metrics view exposed by the testflow API.
 type MetricsResponse struct {
 	Window   MetricsWindow `json:"window"`
 	Scenario string        `json:"scenario,omitempty"`
 	Metrics  Metrics       `json:"metrics"`
 }
 
+// MetricsWindow defines the query time range for metrics aggregation.
 type MetricsWindow struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
+// Metrics contains lightweight workflow quality and operational indicators.
 type Metrics struct {
 	TaskCount                  int     `json:"task_count"`
 	ExecutableCaseRate         float64 `json:"executable_case_rate"`
@@ -183,12 +218,17 @@ type Metrics struct {
 	ManualInterventionRate     float64 `json:"manual_intervention_rate"`
 }
 
+// ErrorResponse is the common JSON error envelope for the HTTP API.
 type ErrorResponse struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	RequestID string `json:"request_id,omitempty"`
 }
 
+// Record is the internal persistence aggregate used by Store implementations.
+//
+// It keeps the top-level task summary together with all generated workflow
+// artifacts so the API can reconstruct a task in one read.
 type Record struct {
 	Task             TestTask
 	Request          *CreateTestTaskRequest
