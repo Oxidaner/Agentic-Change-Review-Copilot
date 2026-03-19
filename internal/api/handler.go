@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"strings"
 
-	"agentic-change-review-copilot/internal/review"
+	"agentic-change-review-copilot/internal/testflow"
 )
 
 type Handler struct {
-	service *review.Service
+	service *testflow.Service
 }
 
-func NewHandler(service *review.Service) http.Handler {
+func NewHandler(service *testflow.Service) http.Handler {
 	return &Handler{service: service}
 }
 
@@ -23,31 +23,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/api/v1/reviews" && r.Method == http.MethodPost {
-		h.createReview(w, r)
+	if r.URL.Path == "/api/v1/test-tasks" && r.Method == http.MethodPost {
+		h.createTask(w, r)
 		return
 	}
 
-	if r.URL.Path == "/api/v1/evaluations/metrics" && r.Method == http.MethodGet {
+	if r.URL.Path == "/api/v1/test-metrics" && r.Method == http.MethodGet {
 		h.getMetrics(w, r)
 		return
 	}
 
-	if !strings.HasPrefix(r.URL.Path, "/api/v1/reviews/") {
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/test-tasks/") {
 		h.writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/reviews/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/test-tasks/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		h.writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
-	reviewID := parts[0]
+	taskID := parts[0]
 
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		h.getReview(w, reviewID)
+		h.getTask(w, taskID)
 		return
 	}
 
@@ -58,32 +58,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case parts[1] == "timeline" && r.Method == http.MethodGet:
-		h.getTimeline(w, reviewID)
-	case parts[1] == "human-decision" && r.Method == http.MethodPost:
-		h.submitHumanDecision(w, r, reviewID)
+		h.getTimeline(w, taskID)
 	case parts[1] == "retry" && r.Method == http.MethodPost:
-		h.retryReview(w, r, reviewID)
-	case parts[1] == "evaluation" && r.Method == http.MethodPost:
-		h.updateEvaluation(w, r, reviewID)
-	case parts[1] == "export" && r.Method == http.MethodGet:
-		h.exportReview(w, r, reviewID)
+		h.retryTask(w, r, taskID)
+	case parts[1] == "report" && r.Method == http.MethodGet:
+		h.exportReport(w, r, taskID)
 	default:
 		h.writeError(w, http.StatusNotFound, "not_found", "route not found")
 	}
 }
 
-func (h *Handler) createReview(w http.ResponseWriter, r *http.Request) {
-	var req review.CreateReviewRequest
+func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) {
+	var req testflow.CreateTestTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if req.SourceType == "" || req.SourceID == "" || req.Environment == "" {
-		h.writeError(w, http.StatusBadRequest, "bad_request", "source_type, source_id, and environment are required")
+	if req.InputType == "" || req.SourceID == "" {
+		h.writeError(w, http.StatusBadRequest, "bad_request", "input_type and source_id are required")
 		return
 	}
 
-	resp, err := h.service.CreateReview(req)
+	resp, err := h.service.CreateTask(req)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -91,8 +87,8 @@ func (h *Handler) createReview(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
-func (h *Handler) getReview(w http.ResponseWriter, reviewID string) {
-	resp, err := h.service.GetReview(reviewID)
+func (h *Handler) getTask(w http.ResponseWriter, taskID string) {
+	resp, err := h.service.GetTask(taskID)
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -100,8 +96,8 @@ func (h *Handler) getReview(w http.ResponseWriter, reviewID string) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) getTimeline(w http.ResponseWriter, reviewID string) {
-	resp, err := h.service.GetTimeline(reviewID)
+func (h *Handler) getTimeline(w http.ResponseWriter, taskID string) {
+	resp, err := h.service.GetTimeline(taskID)
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -109,34 +105,11 @@ func (h *Handler) getTimeline(w http.ResponseWriter, reviewID string) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) submitHumanDecision(w http.ResponseWriter, r *http.Request, reviewID string) {
-	var req review.HumanDecisionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
-		return
-	}
-	if req.Reviewer == "" || req.Decision == "" {
-		h.writeError(w, http.StatusBadRequest, "bad_request", "reviewer and decision are required")
-		return
-	}
-
-	resp, err := h.service.SubmitHumanDecision(reviewID, req)
-	if err != nil {
-		if err.Error() == "invalid decision" {
-			h.writeError(w, http.StatusBadRequest, "bad_request", err.Error())
-			return
-		}
-		h.writeServiceError(w, err)
-		return
-	}
-	h.writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) retryReview(w http.ResponseWriter, r *http.Request, reviewID string) {
-	var req review.RetryRequest
+func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req testflow.RetryTaskRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	resp, err := h.service.RetryReview(reviewID, req)
+	resp, err := h.service.RetryTask(taskID, req)
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -144,28 +117,13 @@ func (h *Handler) retryReview(w http.ResponseWriter, r *http.Request, reviewID s
 	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
-func (h *Handler) updateEvaluation(w http.ResponseWriter, r *http.Request, reviewID string) {
-	var req review.EvaluationUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
-		return
-	}
-
-	resp, err := h.service.UpdateEvaluation(reviewID, req)
-	if err != nil {
-		h.writeServiceError(w, err)
-		return
-	}
-	h.writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) exportReview(w http.ResponseWriter, r *http.Request, reviewID string) {
+func (h *Handler) exportReport(w http.ResponseWriter, r *http.Request, taskID string) {
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "markdown"
 	}
 
-	body, contentType, err := h.service.ExportReview(reviewID, format)
+	body, contentType, err := h.service.ExportReport(taskID, format)
 	if err != nil {
 		h.writeServiceError(w, err)
 		return
@@ -178,13 +136,13 @@ func (h *Handler) exportReview(w http.ResponseWriter, r *http.Request, reviewID 
 func (h *Handler) getMetrics(w http.ResponseWriter, r *http.Request) {
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
-	service := r.URL.Query().Get("service")
+	scenario := r.URL.Query().Get("scenario")
 	if from == "" || to == "" {
 		h.writeError(w, http.StatusBadRequest, "bad_request", "from and to are required")
 		return
 	}
 
-	resp, err := h.service.GetEvaluationMetrics(from, to, service)
+	resp, err := h.service.GetMetrics(from, to, scenario)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -194,9 +152,9 @@ func (h *Handler) getMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, review.ErrNotFound):
+	case errors.Is(err, testflow.ErrNotFound):
 		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
-	case errors.Is(err, review.ErrConflict):
+	case errors.Is(err, testflow.ErrConflict):
 		h.writeError(w, http.StatusConflict, "conflict", err.Error())
 	default:
 		h.writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -210,8 +168,5 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, status int, code, message string) {
-	h.writeJSON(w, status, review.ErrorResponse{
-		Code:    code,
-		Message: message,
-	})
+	h.writeJSON(w, status, testflow.ErrorResponse{Code: code, Message: message})
 }

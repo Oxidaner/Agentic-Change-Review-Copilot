@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 
 	"agentic-change-review-copilot/internal/api"
-	"agentic-change-review-copilot/internal/review"
+	"agentic-change-review-copilot/internal/testflow"
 )
 
 func main() {
 	store := mustBuildStore()
-	service := review.NewService(store)
+	service := testflow.NewService(store)
 	handler := api.NewHandler(service)
 
 	addr := ":" + envOrDefault("PORT", "8080")
@@ -24,11 +24,11 @@ func main() {
 	}
 }
 
-func mustBuildStore() review.Store {
+func mustBuildStore() testflow.Store {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		log.Print("DATABASE_URL not set, using in-memory store")
-		return review.NewMemoryStore()
+		return testflow.NewMemoryStore()
 	}
 
 	db, err := sql.Open("pgx", dsn)
@@ -45,13 +45,13 @@ func mustBuildStore() review.Store {
 			log.Fatalf("resolve working directory: %v", err)
 		}
 		migrationDir := filepath.Join(root, "migrations")
-		if err := review.RunMigrations(db, migrationDir); err != nil {
+		if err := testflow.RunMigrations(db, migrationDir); err != nil {
 			log.Fatalf("run migrations: %v", err)
 		}
 	}
 
 	log.Print("using PostgreSQL store")
-	return review.NewPostgresStore(db)
+	return testflow.NewPostgresStore(db)
 }
 
 func envOrDefault(key, fallback string) string {
