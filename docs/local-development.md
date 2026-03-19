@@ -1,17 +1,17 @@
 # Local Development
 
-## What You Are Running
+## Current Reality
 
-This repository currently runs the MVP backend skeleton for:
+The repository is now documented as:
 
-`Evidence-Grounded Change Review Copilot`
+`基于 Workflow Agent 的 AI 自动化测试平台`
 
-In the current implementation, that means:
-- a controlled review workflow
-- review task persistence
-- human review feedback
-- evaluation feedback
-- export and metrics APIs
+However, the current implementation is still a backend skeleton inherited from the previous review-oriented MVP. That is expected during this transition phase.
+
+Use the current runtime as:
+- a reusable workflow backend base
+- a persistence and API skeleton
+- a starting point for migrating into the AI testing platform flow
 
 ## Start With Docker Compose
 
@@ -34,66 +34,34 @@ go test ./...
 go build ./...
 ```
 
-## Current MVP Scope
+## Final Product Scope
 
-The current product narrative is now:
-- primary scenario: engineering change review
-- Phase 1 focus: `PR diff + K8s/YAML`
-- runtime style: controlled workflow, not free-form agent
+The final project scope is now fixed as:
 
-The code skeleton is broader than that narrative in a few places, but future implementation should follow this narrower scope first.
+`PR / 需求变更 -> 测试点抽取 -> 用例生成 -> 工具执行 -> 智能断言 -> 失败归因 -> 测试报告`
 
-## Example Create Review Request
+Near-term implementation priority:
+- API regression testing first
+- Web UI core-path testing second
 
-```bash
-curl -X POST http://localhost:8080/api/v1/reviews \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_type": "pull_request",
-    "source_id": "PR-123",
-    "repo": "gateway-service",
-    "service": "api-gateway",
-    "environment": "prod",
-    "payload": {
-      "title": "adjust auth routing",
-      "author": "alice",
-      "base_commit": "abc123",
-      "head_commit": "def456",
-      "metadata": {
-        "file_list": ["configs/routes.yaml", "gateway/auth.go"]
-      }
-    }
-  }'
-```
+## Current Development Strategy
 
-## Example Human Decision Request
+Do not expand the current codebase in arbitrary directions.
+
+Use this migration order:
+1. migrate docs and API contract
+2. migrate domain naming and workflow states
+3. migrate persistence objects
+4. integrate real test execution tools
+
+## Current Example Startup Flow
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/reviews/<review_id>/human-decision \
-  -H "Content-Type: application/json" \
-  -d '{
-    "reviewer": "bob",
-    "decision": "override",
-    "reason": "approved during low-traffic window"
-  }'
+docker compose up --build
+go test ./...
+go build ./...
 ```
 
-## Example Evaluation Feedback Request
+## Important Note
 
-```bash
-curl -X POST http://localhost:8080/api/v1/reviews/<review_id>/evaluation \
-  -H "Content-Type: application/json" \
-  -d '{
-    "release_outcome": "success",
-    "incident_flag": false,
-    "outcome_metadata": {
-      "release_id": "rel-001"
-    }
-  }'
-```
-
-## Local Development Notes
-
-- If you want the fastest path, keep using the backend API and test flow first.
-- Do not expand into too many scenarios before `PR diff + K8s/YAML` is truly solid.
-- Keep OpenAPI, docs, and implementation in sync whenever endpoints change.
+The current HTTP endpoints and request examples still reflect the older review-oriented implementation. They should be treated as transitional scaffolding until the API contract is rewritten around the AI testing workflow.

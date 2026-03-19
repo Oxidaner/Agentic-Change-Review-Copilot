@@ -1,246 +1,171 @@
-# Evidence-Grounded Change Review Copilot Spec
+# 基于 Workflow Agent 的 AI 自动化测试平台 Spec
 
 ## 1. Goal And Boundary
 
 ### 1.1 Goal
-- Perform structured risk review before engineering changes enter release flow.
-- Combine change content, evidence, runtime context, rules, model analysis, and human approval into one controlled workflow.
-- Produce structured outputs instead of plain natural language summaries.
-- Support audit trail, human override, evaluation feedback, and continuous improvement.
+- Turn engineering changes into a controlled AI-driven automated testing workflow.
+- Extract test points from PRs or requirement changes.
+- Generate executable test cases.
+- Run tools in a structured workflow.
+- Perform intelligent assertions on execution results.
+- Analyze failures and generate structured test reports.
 
 ### 1.2 Non-Goal
-- Do not directly execute production release actions.
-- Do not replace CI/CD, release platforms, CMDB, or observability systems.
-- Do not build a free-form autonomous agent in the MVP.
-- Do not cover every change type in Phase 1.
+- Do not build a generic autonomous agent.
+- Do not replace every testing platform capability in the MVP.
+- Do not try to cover every test type in the first phase.
+- Do not optimize for chat interaction as the primary interface.
 
-### 1.3 Design Principles
-- Evidence first.
-- Controlled workflow first.
-- AI as capability layer, not system boundary.
-- Human-in-the-loop for high-risk or low-confidence cases.
-- Evaluation and feedback loop as first-class features.
+### 1.3 Core Principle
+- Workflow first.
+- Tool execution first.
+- Structured output first.
+- Failure attribution first.
+- Feedback loop first.
 
-## 2. Primary Scenario
+## 2. Main Line
 
-The project should now be described as one primary scenario:
-- engineering change review
+The project boundary is now fixed to one clear path:
 
-Phase 1 focus:
-- PR diff review
-- K8s / YAML configuration review
+`PR / 需求变更 -> 测试点抽取 -> 用例生成 -> 工具执行 -> 智能断言 -> 失败归因 -> 测试报告`
 
-Later expansion:
-- SQL migration review
-- gateway config review
-- Terraform review
+This is the only main line the MVP should optimize for.
 
 ## 3. Three-Layer Architecture
 
 ### 3.1 Runtime / Orchestration Layer
-
-This layer controls how the workflow runs.
-
 Responsibilities:
-- receive review tasks
-- manage state transitions
-- coordinate steps
-- schedule tool calls
+- receive tasks
+- manage workflow states
+- call tools
 - handle timeout and retry
-- support human takeover
-- persist trace and audit events
+- support human intervention
+- persist trace and execution records
 
-Core abstractions to grow toward:
+Target abstractions:
 - `Workflow`
 - `Step`
 - `State`
 - `Tool`
+- `ToolResult`
 - `ModelAdapter`
-- `ReviewTask`
+- `TestTask`
 - `TraceEvent`
 
-Suggested workflow states:
-- `INIT`
-- `PARSE_CHANGE`
-- `CLASSIFY_CHANGE`
-- `RETRIEVE_CONTEXT`
-- `EXTRACT_RISK_SIGNALS`
-- `RULE_CHECK`
-- `LLM_ANALYZE`
-- `SCORE_RISK`
-- `GENERATE_RECOMMENDATION`
-- `HUMAN_REVIEW_REQUIRED`
-- `DONE`
-- `FAILED`
-
 ### 3.2 AI Capability Layer
-
-This layer provides intelligent capabilities.
-
 Responsibilities:
-- parse change semantics
-- retrieve relevant context
-- extract risk signals
-- run structured model analysis
-- score risk
-- generate recommendation
-- generate rollback plan
+- parse engineering changes
+- extract test points
+- generate test cases
+- suggest test data
+- perform smart assertions
+- analyze failures
+- generate reports
 
 Suggested modules:
 - `change_parser`
-- `context_retriever`
-- `incident_retriever`
-- `runbook_retriever`
-- `risk_signal_extractor`
-- `risk_rule_engine`
-- `risk_scorer`
-- `recommendation_generator`
-- `rollback_planner`
+- `test_point_extractor`
+- `test_case_generator`
+- `test_data_planner`
+- `assertion_engine`
+- `failure_analyzer`
+- `report_generator`
 
 ### 3.3 Scenario Layer
-
-This layer binds the runtime and AI capabilities to concrete engineering scenarios.
-
-Phase 1 should keep the scenario layer narrow:
-- PR diff review
-- K8s / YAML review
-
-## 4. Current System Shape
-
-The current repository already contains a minimal backend skeleton aligned with this spec.
-
-Implemented APIs:
-- create review
-- get review
-- get timeline
-- submit human decision
-- retry review
-- export review
-- submit evaluation feedback
-- query evaluation metrics
-
-Current runtime shape:
-- fixed DAG / controlled workflow
-- heuristic rules
-- structured responses
-- PostgreSQL persistence
-- audit and evaluation feedback persistence
-
-Current limitation:
-- real external systems are not integrated yet
-- tool calls are not fully abstracted yet
-- AI layer is still mostly heuristic / template driven
-
-## 5. Services And Modules
-
-### 5.1 Review API
 Responsibilities:
-- create review tasks
-- expose review detail and timeline
-- accept human decisions
-- accept evaluation feedback
-- export reports
-- query metrics
+- bind the runtime and AI capability layers to concrete testing scenarios
 
-### 5.2 Change Ingestion
-Responsibilities:
-- normalize input into `ChangeBundle`
-- identify source type and change type
-- persist raw and normalized snapshots later
+Phase 1 priority:
+- API regression testing
+- Web UI core-path testing
 
-### 5.3 Workflow Runtime
-Responsibilities:
-- drive state machine
-- run controlled step sequence
-- coordinate review lifecycle
+## 4. Core Workflow
 
-### 5.4 Tool Layer
-Responsibilities:
-- provide stable interface to external systems
-- return structured evidence objects
+1. Accept PR diff or requirement change.
+2. Parse the change.
+3. Extract test points.
+4. Generate structured test cases.
+5. Choose tool execution plan.
+6. Execute tools.
+7. Collect logs, traces, screenshots, and artifacts.
+8. Perform intelligent assertions.
+9. Run failure attribution.
+10. Generate structured test report.
 
-Planned tool types:
-- `git_history_search`
-- `incident_search`
-- `runbook_search`
-- `service_dependency_lookup`
-- `metrics_snapshot`
-- `owner_lookup`
+## 5. Key Modules
 
-### 5.5 Risk Rule Engine
-Responsibilities:
-- produce deterministic `RiskSignal`
-- compute base score and lower bound of risk level
+### 5.1 Change Input Layer
+Normalizes PR diff or requirement change input into a shared input object.
 
-### 5.6 Recommendation Engine
-Responsibilities:
-- generate approval suggestion
-- generate rollout suggestion
-- generate observability checklist
-- generate rollback plan
+### 5.2 Test Point Extractor
+Produces structured test points from engineering changes.
 
-### 5.7 Audit And Evaluation
-Responsibilities:
-- store review events
-- store human decisions
-- store evaluation feedback
-- support reporting metrics
+### 5.3 Test Case Generator
+Produces executable or near-executable test case descriptions.
+
+### 5.4 Tool Execution Layer
+Executes tools such as:
+- `api_test_runner`
+- `ui_test_runner`
+- `mock_data_loader`
+- `log_query`
+- `trace_query`
+- `artifact_collector`
+
+### 5.5 Smart Assertion Layer
+Determines whether execution output satisfies expectations.
+
+### 5.6 Failure Analyzer
+Determines likely failure type, root cause, evidence, and next action.
+
+### 5.7 Report Generator
+Produces JSON or Markdown test report outputs.
 
 ## 6. Core Data Models
 
-### 6.1 ChangeBundle
-Normalized engineering change payload used across workflow steps.
+- `ChangeInput`
+- `TestPoint`
+- `TestCase`
+- `ExecutionPlan`
+- `ExecutionResult`
+- `AssertionResult`
+- `FailureAnalysis`
+- `TestReport`
+- `TraceEvent`
 
-### 6.2 EvidenceItem
-Evidence object with source, title, snippet, reference, confidence, and metadata.
+## 7. Current Repository Status
 
-### 6.3 RiskSignal
-Structured risk signal extracted from rules, parsing, or model analysis.
+The repository currently contains a reusable backend skeleton from the previous review-oriented MVP.
 
-### 6.4 ReviewDecision
-Structured system conclusion containing status, score, risk level, recommendation, and rollback plan.
+What can be reused:
+- HTTP API skeleton
+- service orchestration pattern
+- PostgreSQL persistence pattern
+- evaluation / metrics persistence idea
+- OpenAPI-first contract workflow
+- Docker startup and basic tests
 
-### 6.5 HumanDecision
-Reviewer action such as approve, reject, or override.
+What still needs migration:
+- domain naming
+- workflow states
+- API contract
+- persistence object semantics
+- actual testing tool integrations
 
-### 6.6 EvaluationRecord
-Post-release outcome record used for feedback loop and metrics.
+## 8. Immediate Next Steps
 
-### 6.7 TraceEvent
-Workflow execution event for timeline and audit.
+1. Rewrite OpenAPI around the test automation workflow.
+2. Rename domain objects from review semantics to test-task semantics.
+3. Keep the first executable scenario narrow: API regression workflow.
+4. Add PostgreSQL integration tests after the domain migration.
 
-## 7. MVP End-To-End Flow
+## 9. MVP Success Criteria
 
-1. Accept review input.
-2. Normalize change payload.
-3. Classify change.
-4. Retrieve context or simulated evidence.
-5. Extract risk signals.
-6. Run rule checks.
-7. Produce structured recommendation.
-8. Escalate to human review when high risk or low confidence.
-9. Record human decision.
-10. Record evaluation feedback after release.
-11. Query metrics from persisted records.
-
-## 8. Current Priorities
-
-Highest priority:
-1. Add PostgreSQL integration tests.
-2. Make runtime abstractions explicit in code.
-3. Narrow implementation work to PR diff and K8s/YAML.
-
-Next priority:
-1. Add OpenAPI contract validation.
-2. Add CLI demo.
-3. Separate rule engine / retriever / recommendation generator modules more clearly.
-
-## 9. Success Criteria
-
-This project is successful as an MVP if it can demonstrate:
-- controlled workflow rather than free-form agent behavior
-- structured change review output
-- evidence-grounded risk reasoning
-- human review and override support
-- audit and evaluation feedback loop
-- a credible path to platformization and reuse
+The MVP is successful if it can show:
+- controlled workflow execution
+- test point extraction from change input
+- generated test cases
+- real tool execution
+- intelligent assertion results
+- failure attribution
+- structured test report output

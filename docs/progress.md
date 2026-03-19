@@ -4,85 +4,65 @@
 
 The repository is now positioned as:
 
-`Evidence-Grounded Change Review Copilot`
+`基于 Workflow Agent 的 AI 自动化测试平台`
 
-This means the project should be understood as:
-- a workflow-first runtime for engineering change review
-- an AI capability layer embedded into real engineering processes
-- a controlled, evidence-grounded review system rather than a free-form agent
+This should be understood as:
+- a workflow-first AI test automation runtime
+- an engineering platform skeleton, not a single prompt demo
+- a controlled agent workflow embedded into real test processes
 
-The current codebase is already aligned with that direction at the MVP skeleton level.
+## Current State
 
-## Current Implementation State
+The current codebase still contains review-oriented domain naming, but it already has reusable infrastructure that can be migrated into the test platform direction.
 
-The repository contains a runnable Go backend skeleton for the Phase 1 review flow.
-
-Implemented API capabilities:
-- `POST /api/v1/reviews`
-- `GET /api/v1/reviews/{review_id}`
-- `GET /api/v1/reviews/{review_id}/timeline`
-- `POST /api/v1/reviews/{review_id}/human-decision`
-- `POST /api/v1/reviews/{review_id}/retry`
-- `POST /api/v1/reviews/{review_id}/evaluation`
-- `GET /api/v1/reviews/{review_id}/export`
-- `GET /api/v1/evaluations/metrics`
-
-Storage behavior:
-- Without `DATABASE_URL`, the service uses the in-memory store.
-- With `DATABASE_URL`, the service uses PostgreSQL through `pgx`.
-- With `AUTO_MIGRATE=1`, startup runs all `migrations/*.up.sql`.
-
-Current workflow behavior:
-- fixed DAG / state-machine style flow
-- heuristic risk signals
-- structured recommendation output
-- human decision persistence
+Reusable existing pieces:
+- Go HTTP API skeleton
+- controlled workflow / state-machine style service flow
+- PostgreSQL persistence
 - evaluation feedback persistence
-- metrics aggregation from persisted review records
+- metrics API pattern
+- Docker local startup
+- OpenAPI contract workflow
+- basic automated tests
 
-## How To Read The Current Architecture
+What is not migrated yet:
+- review domain model -> test task domain model
+- review API semantics -> test workflow API semantics
+- risk signal model -> test point / assertion / failure analysis model
+- actual test tool integrations
 
-The current repository should be mapped to the target three-layer architecture like this.
+## Final Product Direction
 
-Runtime / Orchestration layer:
-- `cmd/review-api/main.go`
-- `internal/api/handler.go`
-- `internal/review/service.go`
+The final product direction is now fixed as one clear main line:
 
-AI Capability layer:
-- heuristic rule extraction in `internal/review/service.go`
-- evidence, signal, recommendation, rollback, evaluation models in `internal/review/types.go`
+`PR / 需求变更 -> 测试点抽取 -> 用例生成 -> 工具执行 -> 智能断言 -> 失败归因 -> 测试报告`
 
-Scenario layer:
-- engineering change review as the only implemented scenario
-- current input contract is general, but the intended Phase 1 narrative is now:
-  `PR diff + K8s/YAML review first`
+This means future implementation work should optimize for:
+- API regression testing first
+- Web UI core-path testing second
+- controlled workflow rather than free-form agent planning
 
 ## Important Files
 
 Design and handoff:
-- `docs/agentic_change_review_copilot_design.md`
+- `docs/workflow_agent_ai_test_platform_design.md`
 - `docs/spec.md`
 - `docs/local-development.md`
 
-Entrypoint and HTTP layer:
+Current runtime and API skeleton:
 - `cmd/review-api/main.go`
 - `internal/api/handler.go`
 - `internal/api/handler_test.go`
-
-Domain and workflow logic:
-- `internal/review/types.go`
 - `internal/review/service.go`
-
-Storage:
-- `internal/review/store.go`
+- `internal/review/types.go`
 - `internal/review/postgres.go`
+- `internal/review/store.go`
 
-Contracts and schema:
+Contract and schema:
 - `openapi/openapi.yaml`
 - `migrations/*.sql`
 
-## Major Completed Commits
+## Major Completed Commits Before The Narrative Switch
 
 - `ca387dd` `feat: add review api skeleton and postgres store`
 - `93e043a` `feat: persist human decisions`
@@ -93,53 +73,33 @@ Contracts and schema:
 - `06db8e9` `docs: align openapi with evaluation endpoint`
 - `85d0a0a` `docs: add progress handoff notes`
 - `849d64d` `docs: refocus architecture narrative`
+- `1286fc2` `docs: sync documentation narrative`
 
-## Verified Commands
+These commits built the reusable backend skeleton, but they still use review-oriented naming.
 
-Verified successfully in this repository:
-- `go build ./...`
-- `go test ./...`
-
-Local startup path added:
-- `docker compose up --build`
-
-Note:
-- `docker compose up --build` is the intended local path, but full Docker end-to-end verification was not completed in-session.
-
-## Known Gaps
-
-Still missing or intentionally simplified:
-- No PostgreSQL integration tests yet.
-- No contract validation tooling against `openapi/openapi.yaml`.
-- No real Git / CI / incident / runbook / metrics integrations yet.
-- No explicit `Tool`, `Workflow`, or `ModelAdapter` abstractions in code yet.
-- No CLI demo yet.
-- No frontend console yet.
-- No authentication / authorization layer yet.
-- Current AI layer is still heuristic-heavy and not connected to real external evidence providers.
-
-## Recommended Next Steps
+## What Should Happen Next
 
 Highest priority:
-1. Add PostgreSQL integration tests for migrations, create review, human decision persistence, evaluation persistence, and metrics queries.
-2. Make the runtime abstractions explicit in code: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
-3. Narrow implementation work to the Phase 1 scenario narrative: `PR diff + K8s/YAML`.
+1. Rename and migrate the domain model from review semantics to AI test workflow semantics.
+2. Rewrite `openapi/openapi.yaml` around test workflow endpoints.
+3. Keep the implementation scope narrow: API regression test workflow first.
 
 Second priority:
-1. Add contract validation against `openapi/openapi.yaml`.
-2. Add a CLI demo path that produces JSON and Markdown report outputs.
-3. Start separating rule engine, retriever, and recommendation generator modules from the current monolithic service implementation.
+1. Make runtime abstractions explicit: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
+2. Add PostgreSQL integration tests for the new test-task lifecycle.
+3. Add CLI output for JSON and Markdown test reports.
 
 ## Resume Checklist
 
-If resuming work on another machine:
+If resuming on another machine:
 1. `git pull`
 2. `docker compose up --build`
 3. `go test ./...`
-4. Read `docs/agentic_change_review_copilot_design.md`
-5. Continue with PostgreSQL integration tests as the next engineering step
+4. Read `docs/workflow_agent_ai_test_platform_design.md`
+5. Continue with domain model migration and OpenAPI rewrite
 
-When changing behavior:
-- keep `openapi/openapi.yaml` aligned with implementation
-- keep docs aligned with the Evidence-Grounded positioning
-- keep one logical change per commit
+## Notes
+
+- The code and docs are temporarily in a transition period.
+- The docs now describe the final target direction.
+- The code still reflects the previous review-oriented MVP skeleton and should be migrated incrementally, not thrown away.
