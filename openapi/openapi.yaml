@@ -13,6 +13,7 @@ servers:
 tags:
   - name: TestTasks
   - name: Metrics
+  - name: Webhooks
 paths:
   /api/v1/test-tasks:
     post:
@@ -36,6 +37,41 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+  /api/v1/webhooks/github/pull-request:
+    post:
+      tags: [Webhooks]
+      summary: Ingest a GitHub pull_request webhook
+      operationId: ingestGitHubPullRequestWebhook
+      parameters:
+        - in: header
+          name: X-GitHub-Event
+          required: false
+          schema:
+            type: string
+            enum: [pull_request]
+        - in: header
+          name: X-Hub-Signature-256
+          required: false
+          description: Required when the server is configured with GITHUB_WEBHOOK_SECRET.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitHubPullRequestWebhookRequest'
+      responses:
+        '202':
+          description: Webhook accepted or intentionally ignored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookIngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/test-tasks/{task_id}:
     get:
       tags: [TestTasks]
@@ -171,6 +207,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Resource not found
       content:
@@ -218,7 +260,68 @@ components:
           format: uri
         metadata:
           type: object
+          description: >
+            Optional runner metadata. The live HTTP probe path supports api_base_url,
+            variables, default_headers, default_cookies, and requests[] entries with headers,
+            cookies, query, body, timeout_ms, max_duration_ms, max_attempts, expect_status,
+            expect_headers, expect_headers_absent, expect_cookies,
+            expect_cookies_absent, expect_body_contains, expect_body_not_contains,
+            expect_json_present, expect_json_absent, expect_json,
+            expect_json_types, extract, extract_headers, and extract_cookies fields.
           additionalProperties: true
+          example:
+            api_base_url: http://localhost:8080
+            variables:
+              username: alice
+            default_cookies:
+              locale: en-US
+            requests:
+              - name: login
+                method: POST
+                path: /login
+                headers:
+                  Content-Type: application/json
+                cookies:
+                  flow: login
+                body:
+                  user: '{{username}}'
+                timeout_ms: 2000
+                max_duration_ms: 250
+                max_attempts: 2
+                expect_status: 200
+                expect_headers:
+                  Content-Type: application/json
+                expect_json_present: [token]
+                expect_json:
+                  token: abc123
+                expect_json_types:
+                  token: string
+                extract:
+                  auth_token: token
+                extract_headers:
+                  request_id: X-Request-Id
+                expect_cookies:
+                  session_id: abc123
+                extract_cookies:
+                  session_cookie: session_id
+              - name: profile
+                method: GET
+                path: /profile
+                timeout_ms: 2000
+                max_duration_ms: 250
+                headers:
+                  Authorization: 'Bearer {{auth_token}}'
+                query:
+                  trace_id: '{{request_id}}'
+                expect_status: 200
+                expect_headers_absent: [X-Debug-Trace]
+                expect_body_contains: [admin]
+                expect_body_not_contains: [stacktrace]
+                expect_json_present: [user.id]
+                expect_json_absent: [debug.trace]
+                expect_json:
+                  status: ok
+                  user.role: admin
     CreateTestTaskResponse:
       type: object
       required: [task_id, status, scenario]
@@ -231,9 +334,99 @@ components:
           type: string
         scenario:
           type: string
+    WebhookIngestResponse:
+      type: object
+      required: [accepted]
+      properties:
+        accepted:
+          type: boolean
+        ignored:
+          type: boolean
+        reason:
+          type: string
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        poll_url:
+          type: string
+        scenario:
+          type: string
+    GitHubPullRequestWebhookRequest:
+      type: object
+      required: [action, repository, pull_request]
+      properties:
+        action:
+          type: string
+        number:
+          type: integer
+        repository:
+          $ref: '#/components/schemas/GitHubRepository'
+        pull_request:
+          $ref: '#/components/schemas/GitHubPullRequestPayload'
+        sender:
+          $ref: '#/components/schemas/GitHubUser'
+    GitHubRepository:
+      type: object
+      required: [full_name]
+      properties:
+        name:
+          type: string
+        full_name:
+          type: string
+        html_url:
+          type: string
+          format: uri
+    GitHubPullRequestPayload:
+      type: object
+      required: [number, head]
+      properties:
+        number:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        html_url:
+          type: string
+          format: uri
+        diff_url:
+          type: string
+          format: uri
+        state:
+          type: string
+        draft:
+          type: boolean
+        user:
+          $ref: '#/components/schemas/GitHubUser'
+        head:
+          $ref: '#/components/schemas/GitHubPullRequestRef'
+        base:
+          $ref: '#/components/schemas/GitHubPullRequestRef'
+        labels:
+          type: array
+          items:
+            $ref: '#/components/schemas/GitHubLabel'
+    GitHubUser:
+      type: object
+      properties:
+        login:
+          type: string
+    GitHubPullRequestRef:
+      type: object
+      properties:
+        ref:
+          type: string
+        sha:
+          type: string
+    GitHubLabel:
+      type: object
+      properties:
+        name:
+          type: string
     GetTestTaskResponse:
       type: object
-      required: [task, assertion_result, failure_analysis, report]
+      required: [task, workflow, execution_plan, trace_events, assertion_result, failure_analysis, report]
       properties:
         task:
           $ref: '#/components/schemas/TestTask'
@@ -245,6 +438,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TestCase'
+        workflow:
+          $ref: '#/components/schemas/WorkflowView'
+        execution_plan:
+          $ref: '#/components/schemas/ExecutionPlan'
+        trace_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceEvent'
         execution_results:
           type: array
           items:
@@ -361,6 +562,131 @@ components:
           type: string
         snippet:
           type: string
+    WorkflowView:
+      type: object
+      required: [workflow_id, name, state]
+      properties:
+        workflow_id:
+          type: string
+        name:
+          type: string
+        state:
+          $ref: '#/components/schemas/TaskStatus'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStepView'
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowToolView'
+    WorkflowStepView:
+      type: object
+      required: [step_id, state, title, status, at, order]
+      properties:
+        step_id:
+          type: string
+        state:
+          $ref: '#/components/schemas/TaskStatus'
+        title:
+          type: string
+        detail:
+          type: string
+        status:
+          type: string
+        at:
+          type: string
+          format: date-time
+        order:
+          type: integer
+    WorkflowToolView:
+      type: object
+      required: [tool_name, planned_count, executed_count]
+      properties:
+        tool_name:
+          type: string
+        planned_count:
+          type: integer
+        executed_count:
+          type: integer
+        last_status:
+          $ref: '#/components/schemas/ExecutionStatus'
+        expected_artifacts:
+          type: array
+          items:
+            type: string
+    ExecutionPlan:
+      type: object
+      required: [plan_id, mode]
+      properties:
+        plan_id:
+          type: string
+        mode:
+          type: string
+          enum: [heuristic, live_http]
+        summary:
+          type: string
+        expected_artifacts:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionPlanStep'
+    ExecutionPlanStep:
+      type: object
+      required: [step_id, order, name, tool_name]
+      properties:
+        step_id:
+          type: string
+        order:
+          type: integer
+        name:
+          type: string
+        tool_name:
+          type: string
+        target:
+          type: string
+        assertions:
+          type: array
+          items:
+            type: string
+        variable_refs:
+          type: array
+          items:
+            type: string
+        expected_artifacts:
+          type: array
+          items:
+            type: string
+    TraceEvent:
+      type: object
+      required: [event_id, at, state, kind]
+      properties:
+        event_id:
+          type: string
+        at:
+          type: string
+          format: date-time
+        state:
+          $ref: '#/components/schemas/TaskStatus'
+        kind:
+          type: string
+        message:
+          type: string
+        step_id:
+          type: string
+        case_id:
+          type: string
+        tool_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/ExecutionStatus'
+        artifact_types:
+          type: array
+          items:
+            type: string
     ExecutionResult:
       type: object
       required: [case_id, tool_name, status, duration_ms]

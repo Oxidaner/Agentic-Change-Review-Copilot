@@ -10,7 +10,16 @@ import (
 )
 
 type Handler struct {
-	service *testflow.Service
+	service             *testflow.Service
+	gitHubWebhookSecret string
+}
+
+type HandlerOption func(*Handler)
+
+func WithGitHubWebhookSecret(secret string) HandlerOption {
+	return func(h *Handler) {
+		h.gitHubWebhookSecret = strings.TrimSpace(secret)
+	}
 }
 
 // NewHandler returns the top-level HTTP handler for the testflow API.
@@ -18,8 +27,14 @@ type Handler struct {
 // Routing is intentionally implemented with a small manual dispatcher because the
 // current MVP surface is limited and does not yet justify a larger routing
 // framework dependency.
-func NewHandler(service *testflow.Service) http.Handler {
-	return &Handler{service: service}
+func NewHandler(service *testflow.Service, options ...HandlerOption) http.Handler {
+	handler := &Handler{service: service}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+	return handler
 }
 
 // ServeHTTP performs coarse path dispatch and delegates request-specific work to
@@ -37,6 +52,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/api/v1/test-metrics" && r.Method == http.MethodGet {
 		h.getMetrics(w, r)
+		return
+	}
+
+	if r.URL.Path == "/api/v1/webhooks/github/pull-request" && r.Method == http.MethodPost {
+		h.githubPullRequestWebhook(w, r)
 		return
 	}
 

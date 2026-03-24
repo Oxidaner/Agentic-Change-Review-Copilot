@@ -2,9 +2,13 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +74,21 @@ func TestCreateTaskAndFetch(t *testing.T) {
 	if len(getResp.ExecutionResults) == 0 {
 		t.Fatal("expected execution results")
 	}
+	if len(getResp.TraceEvents) == 0 {
+		t.Fatal("expected trace events")
+	}
+	if getResp.Workflow.WorkflowID == "" {
+		t.Fatal("expected workflow id")
+	}
+	if len(getResp.Workflow.Steps) == 0 {
+		t.Fatal("expected workflow steps")
+	}
+	if getResp.ExecutionPlan.PlanID == "" {
+		t.Fatal("expected execution plan id")
+	}
+	if len(getResp.ExecutionPlan.Steps) != len(getResp.TestCases) {
+		t.Fatalf("execution plan step count = %d, want %d", len(getResp.ExecutionPlan.Steps), len(getResp.TestCases))
+	}
 }
 
 func TestTaskTimelineAndReport(t *testing.T) {
@@ -122,6 +141,207 @@ func TestTaskTimelineAndReport(t *testing.T) {
 
 	if reportRec.Code != http.StatusOK {
 		t.Fatalf("report status = %d, want %d, body=%s", reportRec.Code, http.StatusOK, reportRec.Body.String())
+	}
+}
+
+type webhookResponse struct {
+	Accepted bool                `json:"accepted"`
+	Ignored  bool                `json:"ignored"`
+	Reason   string              `json:"reason"`
+	TaskID   string              `json:"task_id"`
+	Status   testflow.TaskStatus `json:"status"`
+	PollURL  string              `json:"poll_url"`
+	Scenario string              `json:"scenario"`
+}
+
+func TestGitHubPullRequestWebhookCreatesTask(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service)
+
+	payload := map[string]any{
+		"action": "synchronize",
+		"number": 42,
+		"repository": map[string]any{
+			"name":      "gateway-service",
+			"full_name": "octo/gateway-service",
+			"html_url":  "https://github.com/octo/gateway-service",
+		},
+		"pull_request": map[string]any{
+			"number":   42,
+			"title":    "adjust auth routing",
+			"body":     "route auth traffic through gateway",
+			"html_url": "https://github.com/octo/gateway-service/pull/42",
+			"diff_url": "https://github.com/octo/gateway-service/pull/42.diff",
+			"state":    "open",
+			"draft":    false,
+			"user": map[string]any{
+				"login": "alice",
+			},
+			"head": map[string]any{
+				"ref": "feature/auth-routing",
+				"sha": "def456",
+			},
+			"base": map[string]any{
+				"ref": "main",
+				"sha": "abc123",
+			},
+			"labels": []any{
+				map[string]any{"name": "api"},
+			},
+		},
+		"sender": map[string]any{
+			"login": "alice",
+		},
+	}
+	requestBody, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp webhookResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode webhook response: %v", err)
+	}
+	if !resp.Accepted || resp.TaskID == "" {
+		t.Fatalf("webhook response = %+v, want accepted task", resp)
+	}
+	if resp.Scenario != "api_regression" {
+		t.Fatalf("scenario = %s, want api_regression", resp.Scenario)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/test-tasks/"+resp.TaskID, nil)
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d, body=%s", getRec.Code, http.StatusOK, getRec.Body.String())
+	}
+
+	var getResp testflow.GetTestTaskResponse
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if getResp.Task.ChangeID != "octo/gateway-service#42" {
+		t.Fatalf("change_id = %s, want octo/gateway-service#42", getResp.Task.ChangeID)
+	}
+	if getResp.Task.Repo != "octo/gateway-service" {
+		t.Fatalf("repo = %s, want octo/gateway-service", getResp.Task.Repo)
+	}
+	if getResp.Task.Service != "gateway-service" {
+		t.Fatalf("service = %s, want gateway-service", getResp.Task.Service)
+	}
+}
+
+func TestGitHubPullRequestWebhookIgnoresUnsupportedAction(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service)
+
+	payload := map[string]any{
+		"action": "closed",
+		"number": 77,
+		"repository": map[string]any{
+			"name":      "gateway-service",
+			"full_name": "octo/gateway-service",
+		},
+		"pull_request": map[string]any{
+			"number": 77,
+			"head": map[string]any{
+				"sha": "def999",
+			},
+		},
+	}
+	requestBody, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp webhookResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode webhook response: %v", err)
+	}
+	if resp.Accepted || !resp.Ignored {
+		t.Fatalf("webhook response = %+v, want ignored webhook", resp)
+	}
+	if !strings.Contains(resp.Reason, "does not create a test task") {
+		t.Fatalf("reason = %s, want ignore reason", resp.Reason)
+	}
+}
+
+func TestGitHubPullRequestWebhookRejectsWrongEventHeader(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service)
+
+	payload := []byte(`{"action":"opened","repository":{"name":"gateway-service","full_name":"octo/gateway-service"},"pull_request":{"number":1,"head":{"sha":"def123"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "push")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestGitHubPullRequestWebhookRejectsMissingSignatureWhenSecretConfigured(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service, api.WithGitHubWebhookSecret("topsecret"))
+
+	payload := []byte(`{"action":"opened","repository":{"name":"gateway-service","full_name":"octo/gateway-service"},"pull_request":{"number":1,"head":{"sha":"def123"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestGitHubPullRequestWebhookRejectsInvalidSignatureWhenSecretConfigured(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service, api.WithGitHubWebhookSecret("topsecret"))
+
+	payload := []byte(`{"action":"opened","repository":{"name":"gateway-service","full_name":"octo/gateway-service"},"pull_request":{"number":1,"head":{"sha":"def123"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", gitHubWebhookSignature("wrongsecret", payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestGitHubPullRequestWebhookAcceptsValidSignatureWhenSecretConfigured(t *testing.T) {
+	service := testflow.NewService(testflow.NewMemoryStore())
+	handler := api.NewHandler(service, api.WithGitHubWebhookSecret("topsecret"))
+
+	payload := []byte(`{"action":"opened","repository":{"name":"gateway-service","full_name":"octo/gateway-service"},"pull_request":{"number":1,"title":"adjust auth routing","head":{"sha":"def123"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/pull-request", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", gitHubWebhookSignature("topsecret", payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("webhook status = %d, want %d, body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
 	}
 }
 
@@ -185,4 +405,10 @@ func TestMetricsAndIdempotentCreate(t *testing.T) {
 	if metricsResp.Metrics.TaskCount != 1 {
 		t.Fatalf("task_count = %d, want 1", metricsResp.Metrics.TaskCount)
 	}
+}
+
+func gitHubWebhookSignature(secret string, payload []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }

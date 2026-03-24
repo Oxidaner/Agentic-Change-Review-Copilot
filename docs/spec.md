@@ -1,4 +1,4 @@
-# 基于 Workflow Agent 的 AI 自动化测试平台 Spec
+# Workflow Agent AI Test Platform Spec
 
 ## 1. Goal And Boundary
 
@@ -27,7 +27,7 @@
 
 The project boundary is now fixed to one clear path:
 
-`PR / 需求变更 -> 测试点抽取 -> 用例生成 -> 工具执行 -> 智能断言 -> 失败归因 -> 测试报告`
+`PR / requirement change -> test point extraction -> test case generation -> tool execution -> smart assertion -> failure analysis -> test report`
 
 This is the only main line the MVP should optimize for.
 

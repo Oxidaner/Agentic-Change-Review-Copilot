@@ -4,7 +4,7 @@
 
 The repository is now positioned as:
 
-`基于 Workflow Agent 的 AI 自动化测试平台`
+`Workflow Agent AI Test Platform`
 
 This should be understood as:
 - a workflow-first AI test automation runtime
@@ -18,20 +18,31 @@ The repository has already crossed the key migration line:
 - the OpenAPI contract now exposes `test-tasks` endpoints
 - the new domain package is `internal/testflow`
 - the old `internal/review` package is still kept temporarily as legacy code, but it is no longer the default API path
+- the live HTTP probe path now supports sequential request chaining, query templating, response extraction from JSON bodies, headers, and cookies, cookie-backed session reuse, payload assertions, schema-aware checks, and per-request timeout/latency/retry controls
 
 Current reusable pieces:
 - Go HTTP API skeleton
 - controlled workflow / state-machine style service flow
 - PostgreSQL persistence
 - Docker local startup
+- GitHub Actions CI for unit and PostgreSQL integration coverage
 - OpenAPI contract
 - basic automated tests
+- metadata-driven live HTTP runner for API regression probes
+- richer request/response/assertion/extraction artifacts for live probes, including cookie/session and retry/timeout evidence
+- schema-aware positive and negative assertions for headers, body content, JSON presence, and JSON types
+- derived workflow view for runtime stages and tools
+- derived execution-plan view for task detail and report export
+- structured trace-event view for workflow state, planning, execution, and reporting
+- artifact-grounded failure analysis with explicit result/artifact evidence refs
+- local CLI adapter for create/get/report flows against the HTTP API
+- GitHub pull_request webhook adapter that maps supported PR events into test tasks with optional HMAC signature verification
 
 ## Final Product Direction
 
 The final product direction is fixed as one clear main line:
 
-`PR / 需求变更 -> 测试点抽取 -> 用例生成 -> 工具执行 -> 智能断言 -> 失败归因 -> 测试报告`
+`PR / requirement change -> test point extraction -> test case generation -> tool execution -> smart assertion -> failure analysis -> test report`
 
 Near-term scope order:
 - Phase 1: PR-driven API regression testing
@@ -47,9 +58,17 @@ Design and handoff:
 
 Current runtime and API:
 - `cmd/review-api/main.go`
+- `cmd/testflow-cli/main.go`
+- `.github/workflows/ci.yml`
 - `internal/api/handler.go`
+- `internal/api/github_webhook.go`
 - `internal/api/handler_test.go`
 - `internal/testflow/service.go`
+- `internal/testflow/workflow_view.go`
+- `internal/testflow/execution_plan.go`
+- `internal/testflow/trace_events.go`
+- `internal/testflow/live_http_runner.go`
+- `internal/testflow/github_webhook.go`
 - `internal/testflow/types.go`
 - `internal/testflow/postgres.go`
 - `internal/testflow/store.go`
@@ -68,12 +87,12 @@ These two commits are the actual business pivot point from the old review MVP in
 ## What Still Needs Work
 
 Highest priority:
-1. Integrate a real API test runner instead of heuristic execution.
-2. Add PostgreSQL integration tests for the new `test_tasks` lifecycle.
-3. Add smarter assertion generation and failure analysis grounded in real artifacts.
+1. Continue broadening the live HTTP runner beyond the current sequential HTTP path.
+2. Continue improving assertion generation and artifact-grounded failure attribution.
+3. Improve artifact collection and richer execution evidence.
 
 Second priority:
-1. Add a CLI or webhook adapter for PR-triggered task creation.
+1. Continue expanding PR-source ingestion beyond the current GitHub pull_request webhook path.
 2. Decide whether to delete or archive `internal/review` after the migration stabilizes.
 3. Make runtime abstractions more explicit: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
 
@@ -84,10 +103,10 @@ If resuming on another machine:
 2. `docker compose up --build`
 3. `go test ./...`
 4. Read `docs/workflow_agent_ai_test_platform_design.md`
-5. Continue from real tool integration or PostgreSQL integration tests
+5. Continue from API runner expansion or richer artifact-based analysis
 
 ## Notes
 
 - `.idea/` is still untracked and intentionally untouched.
 - The codebase is no longer in the old "docs switched but API did not" state.
-- Remaining migration work is now mostly about deleting legacy code and replacing simulated execution with real tools.
+- Remaining migration work is now mostly about deleting legacy code and deepening the real tool execution path.

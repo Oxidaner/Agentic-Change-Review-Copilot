@@ -19,7 +19,7 @@ import (
 func main() {
 	store := mustBuildStore()
 	service := testflow.NewService(store)
-	handler := api.NewHandler(service)
+	handler := api.NewHandler(service, api.WithGitHubWebhookSecret(os.Getenv("GITHUB_WEBHOOK_SECRET")))
 
 	addr := ":" + envOrDefault("PORT", "8080")
 	log.Printf("testflow-api listening on %s", addr)

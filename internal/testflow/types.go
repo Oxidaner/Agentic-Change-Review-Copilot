@@ -120,6 +120,72 @@ type ExecutionArtifact struct {
 	Snippet      string `json:"snippet,omitempty"`
 }
 
+// ExecutionPlan summarizes how the workflow intends to execute generated cases.
+type ExecutionPlan struct {
+	PlanID            string              `json:"plan_id"`
+	Mode              string              `json:"mode"`
+	Summary           string              `json:"summary,omitempty"`
+	Steps             []ExecutionPlanStep `json:"steps,omitempty"`
+	ExpectedArtifacts []string            `json:"expected_artifacts,omitempty"`
+}
+
+// ExecutionPlanStep describes one executable step in the planned workflow.
+type ExecutionPlanStep struct {
+	StepID            string   `json:"step_id"`
+	Order             int      `json:"order"`
+	Name              string   `json:"name"`
+	ToolName          string   `json:"tool_name"`
+	Target            string   `json:"target,omitempty"`
+	Assertions        []string `json:"assertions,omitempty"`
+	VariableRefs      []string `json:"variable_refs,omitempty"`
+	ExpectedArtifacts []string `json:"expected_artifacts,omitempty"`
+}
+
+// TraceEvent is the structured workflow trace view derived from timeline,
+// execution plan, and tool results.
+type TraceEvent struct {
+	EventID       string          `json:"event_id"`
+	At            time.Time       `json:"at"`
+	State         TaskStatus      `json:"state"`
+	Kind          string          `json:"kind"`
+	Message       string          `json:"message,omitempty"`
+	StepID        string          `json:"step_id,omitempty"`
+	CaseID        string          `json:"case_id,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	Status        ExecutionStatus `json:"status,omitempty"`
+	ArtifactTypes []string        `json:"artifact_types,omitempty"`
+	Sequence      int             `json:"-"`
+}
+
+// WorkflowView is the derived runtime-oriented view over workflow stages and tools.
+type WorkflowView struct {
+	WorkflowID string             `json:"workflow_id"`
+	Name       string             `json:"name"`
+	State      TaskStatus         `json:"state"`
+	Steps      []WorkflowStepView `json:"steps,omitempty"`
+	Tools      []WorkflowToolView `json:"tools,omitempty"`
+}
+
+// WorkflowStepView describes one runtime step in the workflow lifecycle.
+type WorkflowStepView struct {
+	StepID string     `json:"step_id"`
+	State  TaskStatus `json:"state"`
+	Title  string     `json:"title"`
+	Detail string     `json:"detail,omitempty"`
+	Status string     `json:"status"`
+	At     time.Time  `json:"at"`
+	Order  int        `json:"order"`
+}
+
+// WorkflowToolView summarizes planned and executed usage of one tool.
+type WorkflowToolView struct {
+	ToolName          string          `json:"tool_name"`
+	PlannedCount      int             `json:"planned_count"`
+	ExecutedCount     int             `json:"executed_count"`
+	LastStatus        ExecutionStatus `json:"last_status,omitempty"`
+	ExpectedArtifacts []string        `json:"expected_artifacts,omitempty"`
+}
+
 // ExecutionResult records the outcome of running one generated test case.
 type ExecutionResult struct {
 	CaseID     string              `json:"case_id"`
@@ -164,6 +230,9 @@ type GetTestTaskResponse struct {
 	Task             TestTask          `json:"task"`
 	TestPoints       []TestPoint       `json:"test_points,omitempty"`
 	TestCases        []TestCase        `json:"test_cases,omitempty"`
+	Workflow         WorkflowView      `json:"workflow"`
+	ExecutionPlan    ExecutionPlan     `json:"execution_plan"`
+	TraceEvents      []TraceEvent      `json:"trace_events,omitempty"`
 	ExecutionResults []ExecutionResult `json:"execution_results,omitempty"`
 	AssertionResult  AssertionResult   `json:"assertion_result"`
 	FailureAnalysis  FailureAnalysis   `json:"failure_analysis"`
