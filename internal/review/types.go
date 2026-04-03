@@ -109,6 +109,26 @@ type Recommendation struct {
 	ObservabilityPlan []string        `json:"observability_plan,omitempty"`
 }
 
+// HybridAnalysis captures the model-assisted assessment returned by the
+// analyzer stage before final rule scoring is applied.
+type HybridAnalysis struct {
+	Mode                string                `json:"mode,omitempty"`
+	Analyzer            string                `json:"analyzer,omitempty"`
+	Summary             string                `json:"summary,omitempty"`
+	Confidence          float64               `json:"confidence,omitempty"`
+	RequiresHumanReview bool                  `json:"requires_human_review,omitempty"`
+	Rationale           []string              `json:"rationale,omitempty"`
+	SuggestedSignals    []SuggestedRiskSignal `json:"suggested_signals,omitempty"`
+}
+
+// SuggestedRiskSignal is an analyzer-proposed signal that can be merged with
+// rule-derived signals during hybrid assessment.
+type SuggestedRiskSignal struct {
+	SignalName  string    `json:"signal_name"`
+	Severity    RiskLevel `json:"severity"`
+	Explanation string    `json:"explanation,omitempty"`
+}
+
 // RolloutStrategy is the release progression plan attached to a recommendation.
 type RolloutStrategy struct {
 	Steps           []string `json:"steps,omitempty"`
@@ -139,6 +159,7 @@ type EvidenceItem struct {
 // GetReviewResponse is the aggregate response returned by GET /reviews/{id}.
 type GetReviewResponse struct {
 	Review         Review         `json:"review"`
+	Analysis       HybridAnalysis `json:"analysis,omitempty"`
 	Signals        []RiskSignal   `json:"signals,omitempty"`
 	Recommendation Recommendation `json:"recommendation,omitempty"`
 	RollbackPlan   RollbackPlan   `json:"rollback_plan,omitempty"`
@@ -255,6 +276,7 @@ type Record struct {
 	Request        *CreateReviewRequest
 	Bundle         *ChangeBundle
 	Understanding  *ChangeUnderstanding
+	Analysis       *HybridAnalysis
 	TaskID         string
 	Signals        []RiskSignal
 	Recommendation Recommendation

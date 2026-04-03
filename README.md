@@ -17,6 +17,7 @@ The current repository exposes a runnable backend for the review-first direction
 
 - create change reviews
 - query review detail with risk signals, recommendation, rollback plan, and evidence
+- query review detail with hybrid-analysis output alongside rule-based signals
 - query workflow timeline and audit trace history
 - submit human approval / rejection / override decisions
 - retry failed reviews
@@ -30,6 +31,7 @@ The current review pipeline is still mostly heuristic, but it already supports:
 
 - normalized change bundles for PR-style inputs
 - rule-based risk signal extraction across PR, SQL, K8s, gateway, and production-change patterns
+- a pluggable hybrid-analysis stage with a default heuristic fallback analyzer and future LLM integration seam
 - structured evidence packing
 - human-review gating for high-risk or low-confidence decisions
 - recommendation and rollback-plan generation
@@ -153,3 +155,4 @@ go build ./...
 - `internal/review` is the active product surface.
 - `internal/testflow` remains in-tree as a secondary exploration and reusable workflow runtime reference.
 - External context metadata attached to evidence is allowlisted before persistence to avoid leaking secrets or internal-only payloads.
+- The `analysis` field in review responses is currently backed by the new hybrid-analysis skeleton and is ready for a future real LLM adapter.

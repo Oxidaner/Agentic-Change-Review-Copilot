@@ -22,6 +22,7 @@ The repository has been realigned back to the review-centric product direction:
 - the GitHub `pull_request` webhook now maps into review creation instead of test tasks
 - the evidence pipeline now supports allowlisted external context attachments for Git, CMDB, metrics, and runbook-style metadata
 - the external-context evidence path now strips unexpected nested fields before persistence
+- a pluggable hybrid-analysis stage now sits between evidence collection and final rule scoring, with a heuristic fallback analyzer and response-level `analysis` output
 
 Current reusable pieces:
 
@@ -91,6 +92,7 @@ Implemented:
 - GitHub PR webhook ingestion
 - evaluation feedback persistence and aggregate metrics
 - allowlisted external-context evidence packing
+- hybrid `rules + LLM` analysis skeleton with pluggable analyzer injection
 
 Partially implemented:
 

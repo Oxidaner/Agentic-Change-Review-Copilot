@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -145,3 +146,102 @@ func (s *conflictStore) List() []Record {
 }
 
 var _ Store = (*conflictStore)(nil)
+
+func TestCreateReviewHybridAnalysisMergesAnalyzerSignals(t *testing.T) {
+	store := NewMemoryStore()
+	service := NewService(store, WithAnalyzer(stubAnalyzer{
+		analysis: HybridAnalysis{
+			Mode:                "rules_plus_llm_skeleton",
+			Analyzer:            "stub_llm",
+			Summary:             "Model flagged rollout-sensitive auth change.",
+			Confidence:          0.91,
+			RequiresHumanReview: true,
+			Rationale:           []string{"auth path touches production gateway"},
+			SuggestedSignals: []SuggestedRiskSignal{
+				{
+					SignalName:  "llm_gateway_auth_regression",
+					Severity:    RiskHigh,
+					Explanation: "Model detected gateway auth regression risk.",
+				},
+			},
+		},
+	}))
+
+	resp, err := service.CreateReview(CreateReviewRequest{
+		SourceType:  "pull_request",
+		SourceID:    "PR-321",
+		Repo:        "gateway-service",
+		Service:     "gateway-service",
+		Environment: "prod",
+		Payload: ReviewPayload{
+			Title:      "adjust auth routing",
+			Author:     "alice",
+			BaseCommit: "abc123",
+			HeadCommit: "def456",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create review: %v", err)
+	}
+
+	got, err := service.GetReview(resp.ReviewID)
+	if err != nil {
+		t.Fatalf("get review: %v", err)
+	}
+	if got.Analysis.Analyzer != "stub_llm" {
+		t.Fatalf("analysis analyzer = %s, want stub_llm", got.Analysis.Analyzer)
+	}
+	if got.Analysis.Confidence != 0.91 {
+		t.Fatalf("analysis confidence = %v, want 0.91", got.Analysis.Confidence)
+	}
+	found := false
+	for _, signal := range got.Signals {
+		if signal.SignalName == "llm_gateway_auth_regression" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("signals = %+v, want analyzer-suggested signal", got.Signals)
+	}
+}
+
+func TestCreateReviewHybridAnalysisFallsBackOnAnalyzerError(t *testing.T) {
+	service := NewService(NewMemoryStore(), WithAnalyzer(stubAnalyzer{
+		err: errors.New("model unavailable"),
+	}))
+
+	resp, err := service.CreateReview(CreateReviewRequest{
+		SourceType:  "pull_request",
+		SourceID:    "PR-654",
+		Repo:        "gateway-service",
+		Service:     "gateway-service",
+		Environment: "staging",
+		Payload: ReviewPayload{
+			Title: "adjust auth routing",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create review: %v", err)
+	}
+
+	got, err := service.GetReview(resp.ReviewID)
+	if err != nil {
+		t.Fatalf("get review: %v", err)
+	}
+	if got.Analysis.Analyzer != "analysis_error_fallback" {
+		t.Fatalf("analysis analyzer = %s, want analysis_error_fallback", got.Analysis.Analyzer)
+	}
+}
+
+type stubAnalyzer struct {
+	analysis HybridAnalysis
+	err      error
+}
+
+func (s stubAnalyzer) Analyze(AnalyzerInput) (HybridAnalysis, error) {
+	if s.err != nil {
+		return HybridAnalysis{}, s.err
+	}
+	return s.analysis, nil
+}

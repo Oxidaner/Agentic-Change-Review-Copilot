@@ -359,6 +359,88 @@ func extractRiskSignals(bundle ChangeBundle, understanding ChangeUnderstanding, 
 	return signals, score
 }
 
+func mergeSuggestedSignals(signals []RiskSignal, analysis HybridAnalysis, pack EvidencePack, nextID func(string) string) []RiskSignal {
+	if len(analysis.SuggestedSignals) == 0 {
+		return signals
+	}
+	evidenceRefs := make([]string, 0, len(pack.Items)+1)
+	for _, item := range pack.Items {
+		evidenceRefs = append(evidenceRefs, item.EvidenceID)
+	}
+	evidenceRefs = append(evidenceRefs, "analysis:hybrid")
+
+	existing := make(map[string]struct{}, len(signals))
+	for _, signal := range signals {
+		existing[signal.SignalName] = struct{}{}
+	}
+
+	for _, suggestion := range analysis.SuggestedSignals {
+		if suggestion.SignalName == "" {
+			continue
+		}
+		if _, ok := existing[suggestion.SignalName]; ok {
+			continue
+		}
+		signals = append(signals, RiskSignal{
+			SignalID:     nextID("sig"),
+			SignalName:   suggestion.SignalName,
+			Severity:     suggestion.Severity,
+			ScoreDelta:   scoreDeltaForSeverity(suggestion.Severity),
+			Explanation:  suggestion.Explanation,
+			EvidenceRefs: evidenceRefs,
+		})
+		existing[suggestion.SignalName] = struct{}{}
+	}
+
+	return signals
+}
+
+func applyHybridAnalysisToScore(score ScoreResult, analysis HybridAnalysis) ScoreResult {
+	if analysis.RequiresHumanReview {
+		score.HumanReviewRequired = true
+	}
+	if analysis.Confidence > score.Confidence {
+		score.Confidence = analysis.Confidence
+	}
+	score.RiskLevel = scoreToRiskLevel(score.Score)
+	return score
+}
+
+func hybridAnalysisEvidenceItem(analysis HybridAnalysis, nextID func(string) string) []EvidenceItem {
+	if analysis.Mode == "" && analysis.Summary == "" && len(analysis.Rationale) == 0 {
+		return nil
+	}
+	return []EvidenceItem{
+		{
+			EvidenceID:     nextID("ev"),
+			Type:           "hybrid_analysis",
+			Source:         "change_analyzer",
+			Title:          "Hybrid analysis result",
+			ContentSnippet: analysis.Summary,
+			Confidence:     analysis.Confidence,
+			Metadata: map[string]any{
+				"mode":                  analysis.Mode,
+				"analyzer":              analysis.Analyzer,
+				"requires_human_review": boolString(analysis.RequiresHumanReview),
+				"rationale":             analysis.Rationale,
+			},
+		},
+	}
+}
+
+func scoreDeltaForSeverity(level RiskLevel) int {
+	switch level {
+	case RiskCritical:
+		return 28
+	case RiskHigh:
+		return 18
+	case RiskMedium:
+		return 10
+	default:
+		return 4
+	}
+}
+
 // scoreReview collapses the extracted signals into score, risk level, and human
 // review gating information.
 func scoreReview(signals []RiskSignal) ScoreResult {
@@ -596,4 +678,11 @@ func metadataNestedMap(metadata map[string]any, parent string) map[string]any {
 		return nil
 	}
 	return child
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }

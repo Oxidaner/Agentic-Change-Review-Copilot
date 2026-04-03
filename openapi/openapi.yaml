@@ -329,6 +329,8 @@ components:
       properties:
         review:
           $ref: '#/components/schemas/Review'
+        analysis:
+          $ref: '#/components/schemas/HybridAnalysis'
         signals:
           type: array
           items:
@@ -429,6 +431,38 @@ components:
           type: array
           items:
             type: string
+    HybridAnalysis:
+      type: object
+      properties:
+        mode:
+          type: string
+        analyzer:
+          type: string
+        summary:
+          type: string
+        confidence:
+          type: number
+          format: double
+        requires_human_review:
+          type: boolean
+        rationale:
+          type: array
+          items:
+            type: string
+        suggested_signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedRiskSignal'
+    SuggestedRiskSignal:
+      type: object
+      required: [signal_name, severity]
+      properties:
+        signal_name:
+          type: string
+        severity:
+          $ref: '#/components/schemas/RiskLevel'
+        explanation:
+          type: string
     RolloutStrategy:
       type: object
       properties:

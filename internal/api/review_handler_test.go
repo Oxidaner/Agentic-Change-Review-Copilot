@@ -77,6 +77,9 @@ func TestReviewCreateGetTimelineAndDecision(t *testing.T) {
 	if getResp.Review.RiskLevel == "" {
 		t.Fatal("expected risk level")
 	}
+	if getResp.Analysis.Mode == "" {
+		t.Fatal("expected hybrid analysis")
+	}
 	if len(getResp.Signals) == 0 {
 		t.Fatal("expected risk signals")
 	}

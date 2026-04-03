@@ -16,13 +16,34 @@ var ErrConflict = errors.New("conflict")
 // It is intentionally state-light: all durable workflow state is kept in the
 // Store, while the service focuses on deterministic orchestration.
 type Service struct {
-	store   Store
-	counter atomic.Uint64
+	store    Store
+	analyzer ChangeAnalyzer
+	counter  atomic.Uint64
+}
+
+type ServiceOption func(*Service)
+
+// WithAnalyzer overrides the default analyzer used in the hybrid analysis stage.
+func WithAnalyzer(analyzer ChangeAnalyzer) ServiceOption {
+	return func(service *Service) {
+		if analyzer != nil {
+			service.analyzer = analyzer
+		}
+	}
 }
 
 // NewService constructs the review application service.
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func NewService(store Store, options ...ServiceOption) *Service {
+	service := &Service{
+		store:    store,
+		analyzer: HeuristicAnalyzer{},
+	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 // CreateReview accepts a new review request, applies idempotency, runs the
@@ -118,6 +139,7 @@ func (s *Service) GetReview(reviewID string) (GetReviewResponse, error) {
 
 	return GetReviewResponse{
 		Review:         record.Review,
+		Analysis:       analysisForRecord(record),
 		Signals:        record.Signals,
 		Recommendation: record.Recommendation,
 		RollbackPlan:   record.RollbackPlan,
@@ -243,6 +265,7 @@ func (s *Service) ExportReview(reviewID, format string) ([]byte, string, error) 
 	if format == "json" {
 		payload, err := json.MarshalIndent(GetReviewResponse{
 			Review:         record.Review,
+			Analysis:       analysisForRecord(record),
 			Signals:        record.Signals,
 			Recommendation: record.Recommendation,
 			RollbackPlan:   record.RollbackPlan,
@@ -259,6 +282,13 @@ func (s *Service) ExportReview(reviewID, format string) ([]byte, string, error) 
 		record.Review.Score,
 		record.Review.Summary,
 	)
+	analysis := analysisForRecord(record)
+	if analysis.Mode != "" || analysis.Summary != "" {
+		body += fmt.Sprintf("- Hybrid analysis (%s / %s): %s\n", analysis.Mode, analysis.Analyzer, analysis.Summary)
+		for _, rationale := range analysis.Rationale {
+			body += fmt.Sprintf("- Rationale: %s\n", rationale)
+		}
+	}
 	for _, signal := range record.Signals {
 		body += fmt.Sprintf("- %s: %s\n", signal.SignalName, signal.Explanation)
 	}
@@ -398,11 +428,17 @@ func (s *Service) runPipeline(record Record, req CreateReviewRequest) Record {
 	record.Evidence = evidencePack.Items
 	record = s.transition(record, StatusContextReady, fmt.Sprintf("%d evidence item(s) collected", len(record.Evidence)))
 
+	analysis := s.runHybridAnalysis(bundle, understanding, evidencePack)
+	record.Analysis = &analysis
+	record.Evidence = append(record.Evidence, hybridAnalysisEvidenceItem(analysis, s.nextID)...)
+
 	signals, _ := extractRiskSignals(bundle, understanding, evidencePack, s.nextID)
+	signals = mergeSuggestedSignals(signals, analysis, evidencePack, s.nextID)
 	record.Signals = signals
 	record = s.transition(record, StatusSignalsExtracted, fmt.Sprintf("%d risk signals extracted", len(signals)))
 
 	score := scoreReview(signals)
+	score = applyHybridAnalysisToScore(score, analysis)
 	record.Review.Score = score.Score
 	record.Review.RiskLevel = score.RiskLevel
 	record.Review.Confidence = score.Confidence
@@ -437,6 +473,49 @@ func (s *Service) transition(record Record, status ReviewStatus, detail string) 
 	record.Review.UpdatedAt = now
 	record.Timeline = append(record.Timeline, TimelineEvent{State: status, At: now, Detail: detail})
 	return record
+}
+
+func (s *Service) runHybridAnalysis(bundle ChangeBundle, understanding ChangeUnderstanding, evidencePack EvidencePack) HybridAnalysis {
+	if s.analyzer == nil {
+		return HybridAnalysis{}
+	}
+	analysis, err := s.analyzer.Analyze(AnalyzerInput{
+		Bundle:        bundle,
+		Understanding: understanding,
+		Evidence:      evidencePack.Items,
+	})
+	if err != nil {
+		return HybridAnalysis{
+			Mode:      "rules_plus_llm_skeleton",
+			Analyzer:  "analysis_error_fallback",
+			Summary:   "Analyzer stage failed; pipeline continued with rule-only fallback.",
+			Rationale: []string{err.Error()},
+		}
+	}
+	if analysis.Mode == "" {
+		analysis.Mode = "rules_plus_llm_skeleton"
+	}
+	return analysis
+}
+
+func analysisForRecord(record Record) HybridAnalysis {
+	if record.Analysis != nil {
+		return *record.Analysis
+	}
+	for _, item := range record.Evidence {
+		if item.Type != "hybrid_analysis" || item.Metadata == nil {
+			continue
+		}
+		return HybridAnalysis{
+			Mode:                metadataString(item.Metadata, "mode"),
+			Analyzer:            metadataString(item.Metadata, "analyzer"),
+			Summary:             item.ContentSnippet,
+			Confidence:          item.Confidence,
+			RequiresHumanReview: metadataString(item.Metadata, "requires_human_review") == "true",
+			Rationale:           metadataStringSlice(item.Metadata, "rationale"),
+		}
+	}
+	return HybridAnalysis{}
 }
 
 // confidenceFor returns the heuristic confidence attached to a risk level.
