@@ -24,6 +24,7 @@ type ChangeBundle struct {
 	ImpactedComponents []string
 	DiffSummary        string
 	ReleaseTarget      string
+	Metadata           map[string]any
 }
 
 // ChangeUnderstanding stores the semantic interpretation derived from the bundle.
@@ -70,6 +71,7 @@ func normalizeChange(req CreateReviewRequest, now time.Time) ChangeBundle {
 		ImpactedComponents: inferImpactedComponents(req, fileList),
 		DiffSummary:        summarizeDiff(req, fileList),
 		ReleaseTarget:      req.Environment,
+		Metadata:           req.Payload.Metadata,
 	}
 }
 
@@ -163,7 +165,143 @@ func collectEvidence(bundle ChangeBundle, understanding ChangeUnderstanding, nex
 		},
 	}
 
+	items = append(items, collectExternalContextEvidence(bundle, nextID)...)
+
 	return EvidencePack{Items: items}
+}
+
+func collectExternalContextEvidence(bundle ChangeBundle, nextID func(string) string) []EvidenceItem {
+	if bundle.Metadata == nil {
+		return nil
+	}
+
+	items := make([]EvidenceItem, 0, 4)
+	appendMapEvidence := func(key, source, title, snippet string, metadata map[string]any) {
+		if len(metadata) == 0 {
+			return
+		}
+		items = append(items, EvidenceItem{
+			EvidenceID:     nextID("ev"),
+			Type:           key + "_context",
+			Source:         source,
+			Title:          title,
+			ContentSnippet: snippet,
+			Confidence:     0.81,
+			Metadata:       metadata,
+		})
+	}
+
+	appendMapEvidence(
+		"git",
+		"git_context_collector",
+		"Git change context",
+		firstNonEmpty(metadataNestedString(bundle.Metadata, "git", "diff_summary"), metadataNestedString(bundle.Metadata, "git", "diff_url"), "git context attached"),
+		safeGitEvidenceMetadata(bundle.Metadata),
+	)
+	appendMapEvidence(
+		"cmdb",
+		"cmdb_lookup",
+		"CMDB service context",
+		firstNonEmpty(metadataNestedString(bundle.Metadata, "cmdb", "service_tier"), metadataNestedString(bundle.Metadata, "cmdb", "owner"), "cmdb service metadata attached"),
+		safeCMDBEvidenceMetadata(bundle.Metadata),
+	)
+	appendMapEvidence(
+		"metrics",
+		"metrics_query",
+		"Recent metrics context",
+		firstNonEmpty(metadataNestedString(bundle.Metadata, "metrics", "summary"), "recent metrics snapshot attached"),
+		safeMetricsEvidenceMetadata(bundle.Metadata),
+	)
+	appendMapEvidence(
+		"runbook",
+		"runbook_lookup",
+		"Runbook guidance",
+		firstNonEmpty(metadataNestedString(bundle.Metadata, "runbook", "title"), metadataNestedString(bundle.Metadata, "runbook", "url"), "runbook reference attached"),
+		safeRunbookEvidenceMetadata(bundle.Metadata),
+	)
+
+	return items
+}
+
+func safeGitEvidenceMetadata(metadata map[string]any) map[string]any {
+	gitMetadata := metadataNestedMap(metadata, "git")
+	if len(gitMetadata) == 0 {
+		return nil
+	}
+	return compactMetadataMap(map[string]any{
+		"provider":     metadataString(gitMetadata, "provider"),
+		"repository":   metadataString(gitMetadata, "repository"),
+		"base_commit":  metadataString(gitMetadata, "base_commit"),
+		"head_commit":  metadataString(gitMetadata, "head_commit"),
+		"base_ref":     metadataString(gitMetadata, "base_ref"),
+		"head_ref":     metadataString(gitMetadata, "head_ref"),
+		"diff_url":     metadataString(gitMetadata, "diff_url"),
+		"diff_summary": metadataString(gitMetadata, "diff_summary"),
+	})
+}
+
+func safeCMDBEvidenceMetadata(metadata map[string]any) map[string]any {
+	cmdbMetadata := metadataNestedMap(metadata, "cmdb")
+	if len(cmdbMetadata) == 0 {
+		return nil
+	}
+	return compactMetadataMap(map[string]any{
+		"service_name": metadataString(cmdbMetadata, "service_name"),
+		"service_tier": metadataString(cmdbMetadata, "service_tier"),
+		"owner":        metadataString(cmdbMetadata, "owner"),
+		"runtime":      metadataString(cmdbMetadata, "runtime"),
+		"system":       metadataString(cmdbMetadata, "system"),
+	})
+}
+
+func safeMetricsEvidenceMetadata(metadata map[string]any) map[string]any {
+	metricsMetadata := metadataNestedMap(metadata, "metrics")
+	if len(metricsMetadata) == 0 {
+		return nil
+	}
+	return compactMetadataMap(map[string]any{
+		"summary":           metadataString(metricsMetadata, "summary"),
+		"window":            metadataString(metricsMetadata, "window"),
+		"error_rate":        metadataString(metricsMetadata, "error_rate"),
+		"latency_p95":       metadataString(metricsMetadata, "latency_p95"),
+		"success_rate":      metadataString(metricsMetadata, "success_rate"),
+		"auth_failure_rate": metadataString(metricsMetadata, "auth_failure_rate"),
+	})
+}
+
+func safeRunbookEvidenceMetadata(metadata map[string]any) map[string]any {
+	runbookMetadata := metadataNestedMap(metadata, "runbook")
+	if len(runbookMetadata) == 0 {
+		return nil
+	}
+	return compactMetadataMap(map[string]any{
+		"title":    metadataString(runbookMetadata, "title"),
+		"url":      metadataString(runbookMetadata, "url"),
+		"owner":    metadataString(runbookMetadata, "owner"),
+		"severity": metadataString(runbookMetadata, "severity"),
+	})
+}
+
+func compactMetadataMap(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		out[key] = text
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // extractRiskSignals translates the bundle plus evidence into explicit risk
@@ -420,4 +558,42 @@ func metadataStringSlice(metadata map[string]any, key string) []string {
 	default:
 		return nil
 	}
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func metadataNestedString(metadata map[string]any, parent, key string) string {
+	child := metadataNestedMap(metadata, parent)
+	if len(child) == 0 {
+		return ""
+	}
+	return metadataString(child, key)
+}
+
+func metadataNestedMap(metadata map[string]any, parent string) map[string]any {
+	if metadata == nil {
+		return nil
+	}
+	value, ok := metadata[parent]
+	if !ok {
+		return nil
+	}
+	child, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return child
 }

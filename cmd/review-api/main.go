@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"agentic-change-review-copilot/internal/api"
-	"agentic-change-review-copilot/internal/testflow"
+	"agentic-change-review-copilot/internal/review"
 )
 
 // main wires together the HTTP layer and the selected persistence implementation.
@@ -18,11 +18,11 @@ import (
 // starting a real HTTP server.
 func main() {
 	store := mustBuildStore()
-	service := testflow.NewService(store)
-	handler := api.NewHandler(service, api.WithGitHubWebhookSecret(os.Getenv("GITHUB_WEBHOOK_SECRET")))
+	service := review.NewService(store)
+	handler := api.NewReviewHandler(service, api.WithReviewGitHubWebhookSecret(os.Getenv("GITHUB_WEBHOOK_SECRET")))
 
 	addr := ":" + envOrDefault("PORT", "8080")
-	log.Printf("testflow-api listening on %s", addr)
+	log.Printf("review-api listening on %s", addr)
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
@@ -38,11 +38,11 @@ func main() {
 //
 // The function exits the process on configuration or connectivity errors because
 // the API cannot serve requests safely without a healthy storage layer.
-func mustBuildStore() testflow.Store {
+func mustBuildStore() review.Store {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		log.Print("DATABASE_URL not set, using in-memory store")
-		return testflow.NewMemoryStore()
+		return review.NewMemoryStore()
 	}
 
 	db, err := sql.Open("pgx", dsn)
@@ -59,13 +59,13 @@ func mustBuildStore() testflow.Store {
 			log.Fatalf("resolve working directory: %v", err)
 		}
 		migrationDir := filepath.Join(root, "migrations")
-		if err := testflow.RunMigrations(db, migrationDir); err != nil {
+		if err := review.RunMigrations(db, migrationDir); err != nil {
 			log.Fatalf("run migrations: %v", err)
 		}
 	}
 
 	log.Print("using PostgreSQL store")
-	return testflow.NewPostgresStore(db)
+	return review.NewPostgresStore(db)
 }
 
 // envOrDefault provides a small helper for environment-driven configuration.

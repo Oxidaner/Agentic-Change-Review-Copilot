@@ -4,109 +4,128 @@
 
 The repository is now positioned as:
 
-`Workflow Agent AI Test Platform`
+`Agentic Change Review Copilot`
 
 This should be understood as:
-- a workflow-first AI test automation runtime
-- an engineering platform skeleton, not a single prompt demo
-- a controlled agent workflow embedded into real test processes
+
+- a workflow-first change-risk audit runtime
+- an engineering system for release-review scenarios, not a prompt demo
+- a controlled agent workflow with audit persistence, human intervention, and evaluation feedback
 
 ## Current State
 
-The repository has already crossed the key migration line:
-- the active HTTP entrypoint now serves `testflow` semantics
-- the OpenAPI contract now exposes `test-tasks` endpoints
-- the new domain package is `internal/testflow`
-- the old `internal/review` package is still kept temporarily as legacy code, but it is no longer the default API path
-- the live HTTP probe path now supports sequential request chaining, query templating, response extraction from JSON bodies, headers, and cookies, cookie-backed session reuse, payload assertions, schema-aware checks, and per-request timeout/latency/retry controls
+The repository has been realigned back to the review-centric product direction:
+
+- the active HTTP entrypoint now serves `review` semantics again
+- the OpenAPI contract now exposes `reviews` endpoints
+- the active domain package is `internal/review`
+- the GitHub `pull_request` webhook now maps into review creation instead of test tasks
+- the evidence pipeline now supports allowlisted external context attachments for Git, CMDB, metrics, and runbook-style metadata
+- the external-context evidence path now strips unexpected nested fields before persistence
 
 Current reusable pieces:
+
 - Go HTTP API skeleton
 - controlled workflow / state-machine style service flow
 - PostgreSQL persistence
 - Docker local startup
-- GitHub Actions CI for unit and PostgreSQL integration coverage
 - OpenAPI contract
 - basic automated tests
-- metadata-driven live HTTP runner for API regression probes
-- richer request/response/assertion/extraction artifacts for live probes, including cookie/session and retry/timeout evidence
-- schema-aware positive and negative assertions for headers, body content, JSON presence, and JSON types
-- derived workflow view for runtime stages and tools
-- derived execution-plan view for task detail and report export
-- structured trace-event view for workflow state, planning, execution, and reporting
-- artifact-grounded failure analysis with explicit result/artifact evidence refs
-- local CLI adapter for create/get/report flows against the HTTP API
-- GitHub pull_request webhook adapter that maps supported PR events into test tasks with optional HMAC signature verification
+- structured review timeline and audit trace persistence
+- risk signals, scoring, recommendation, rollback planning, and human-review gating
+- human decision persistence for approve / reject / override flows
+- post-release evaluation feedback and aggregate review metrics
+- GitHub PR webhook ingestion with optional HMAC signature verification
+
+Secondary reusable pieces kept in-tree:
+
+- `internal/testflow` workflow runtime exploration
+- live HTTP runner and artifact-oriented execution patterns that may later feed review evidence collection
 
 ## Final Product Direction
 
 The final product direction is fixed as one clear main line:
 
-`PR / requirement change -> test point extraction -> test case generation -> tool execution -> smart assertion -> failure analysis -> test report`
+`PR / SQL / K8s change -> context retrieval -> hybrid risk analysis -> recommendation -> human decision -> evaluation feedback`
 
 Near-term scope order:
-- Phase 1: PR-driven API regression testing
-- Phase 2: Web UI core-path testing
-- Phase 3: mobile automation expansion
+
+- Phase 1: PR-driven release review
+- Phase 2: SQL and K8s change audit
+- Phase 3: stronger external tool integration and feedback-driven rule / prompt iteration
 
 ## Important Files
 
-Design and handoff:
-- `docs/workflow_agent_ai_test_platform_design.md`
-- `docs/spec.md`
-- `docs/local-development.md`
-
 Current runtime and API:
+
 - `cmd/review-api/main.go`
-- `cmd/testflow-cli/main.go`
-- `.github/workflows/ci.yml`
-- `internal/api/handler.go`
-- `internal/api/github_webhook.go`
-- `internal/api/handler_test.go`
-- `internal/testflow/service.go`
-- `internal/testflow/workflow_view.go`
-- `internal/testflow/execution_plan.go`
-- `internal/testflow/trace_events.go`
-- `internal/testflow/live_http_runner.go`
-- `internal/testflow/github_webhook.go`
-- `internal/testflow/types.go`
-- `internal/testflow/postgres.go`
-- `internal/testflow/store.go`
+- `internal/api/review_handler.go`
+- `internal/api/review_github_webhook.go`
+- `internal/api/review_handler_test.go`
+- `internal/review/service.go`
+- `internal/review/pipeline.go`
+- `internal/review/github_webhook.go`
+- `internal/review/store.go`
+- `internal/review/postgres.go`
 
 Contract and schema:
+
 - `openapi/openapi.yaml`
 - `migrations/*.sql`
 
-## Key Recent Commits
+Reference implementation and exploration:
 
-- `05fbe73` `feat: add testflow core domain`
-- `a665021` `feat: switch api to testflow workflow`
+- `internal/testflow/*`
+- `cmd/testflow-cli/main.go`
 
-These two commits are the actual business pivot point from the old review MVP into the new test automation workflow.
+## What Is Done Against The Acceptance Goal
 
-## What Still Needs Work
+Implemented:
+
+- review workflow orchestration
+- PostgreSQL-backed audit persistence
+- review status progression and timeline records
+- rule-based risk signal extraction
+- recommendation and rollback-plan generation
+- human intervention APIs
+- GitHub PR webhook ingestion
+- evaluation feedback persistence and aggregate metrics
+- allowlisted external-context evidence packing
+
+Partially implemented:
+
+- hybrid `rules + LLM` analysis architecture
+- external tool integration beyond webhook metadata
+- checkpoint / resume semantics beyond retry
+- measurable feedback loop for rule and prompt iteration
+
+Not implemented yet:
+
+- real LLM adapter and tool-calling analysis stage
+- native Git / CMDB / metrics / runbook connectors
+- reproducible benchmark proving 10% audit time reduction
+- fully explicit checkpoint recovery model
+
+## Immediate Next Gaps
 
 Highest priority:
-1. Continue broadening the live HTTP runner beyond the current sequential HTTP path.
-2. Continue improving assertion generation and artifact-grounded failure attribution.
-3. Improve artifact collection and richer execution evidence.
+
+1. add a real LLM-backed analysis stage on top of the current heuristic pipeline
+2. replace metadata-only external context with real adapters for Git, metrics, CMDB, and runbook retrieval
+3. add checkpoint / resume support at workflow-stage granularity
 
 Second priority:
-1. Continue expanding PR-source ingestion beyond the current GitHub pull_request webhook path.
-2. Decide whether to delete or archive `internal/review` after the migration stabilizes.
-3. Make runtime abstractions more explicit: `Workflow`, `Step`, `Tool`, `ModelAdapter`, `TraceEvent`.
+
+1. enrich evaluation ingestion so feedback can tune rules and prompts over time
+2. add more source adapters for SQL and K8s native change inputs
+3. decide how much of `internal/testflow` should be folded back into the review runtime versus archived
 
 ## Resume Checklist
 
 If resuming on another machine:
+
 1. `git pull`
 2. `docker compose up --build`
 3. `go test ./...`
-4. Read `docs/workflow_agent_ai_test_platform_design.md`
-5. Continue from API runner expansion or richer artifact-based analysis
-
-## Notes
-
-- `.idea/` is still untracked and intentionally untouched.
-- The codebase is no longer in the old "docs switched but API did not" state.
-- Remaining migration work is now mostly about deleting legacy code and deepening the real tool execution path.
+4. read `README.md`
+5. continue from LLM analysis integration or real external context adapters
