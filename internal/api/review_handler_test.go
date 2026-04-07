@@ -12,6 +12,18 @@ import (
 	"agentic-change-review-copilot/internal/review"
 )
 
+type stubAnalyzer struct {
+	analysis review.HybridAnalysis
+	err      error
+}
+
+func (s stubAnalyzer) Analyze(review.AnalyzerInput) (review.HybridAnalysis, error) {
+	if s.err != nil {
+		return review.HybridAnalysis{}, s.err
+	}
+	return s.analysis, nil
+}
+
 func TestReviewCreateGetTimelineAndDecision(t *testing.T) {
 	service := review.NewService(review.NewMemoryStore())
 	handler := api.NewReviewHandler(service)
@@ -124,6 +136,88 @@ func TestReviewCreateGetTimelineAndDecision(t *testing.T) {
 	}
 	if decisionResp.Status != review.StatusApproved {
 		t.Fatalf("decision status = %s, want %s", decisionResp.Status, review.StatusApproved)
+	}
+}
+
+func TestReviewGetIncludesHybridAnalysisFieldsFromAnalyzerResult(t *testing.T) {
+	service := review.NewService(review.NewMemoryStore(), review.WithAnalyzer(stubAnalyzer{
+		analysis: review.HybridAnalysis{
+			Mode:                "rules_plus_llm_skeleton",
+			Analyzer:            "stub_llm",
+			Summary:             "Model flagged rollout-sensitive auth change.",
+			Confidence:          0.91,
+			RequiresHumanReview: true,
+			Rationale:           []string{"auth path touches production gateway"},
+			SuggestedSignals: []review.SuggestedRiskSignal{
+				{
+					SignalName:  "llm_gateway_auth_regression",
+					Severity:    review.RiskHigh,
+					Explanation: "Model detected gateway auth regression risk.",
+				},
+			},
+		},
+	}))
+	handler := api.NewReviewHandler(service)
+
+	createBody := map[string]any{
+		"source_type": "pull_request",
+		"source_id":   "PR-777",
+		"repo":        "gateway-service",
+		"service":     "gateway-service",
+		"environment": "prod",
+		"payload": map[string]any{
+			"title":       "adjust auth routing",
+			"author":      "alice",
+			"base_commit": "abc123",
+			"head_commit": "def456",
+		},
+	}
+	createPayload, _ := json.Marshal(createBody)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewReader(createPayload))
+	createRec := httptest.NewRecorder()
+	handler.ServeHTTP(createRec, createReq)
+
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d, body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+
+	var createResp review.CreateReviewResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/reviews/"+createResp.ReviewID, nil)
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d, body=%s", getRec.Code, http.StatusOK, getRec.Body.String())
+	}
+
+	var getResp review.GetReviewResponse
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if getResp.Analysis.Analyzer != "stub_llm" {
+		t.Fatalf("analysis analyzer = %s, want stub_llm", getResp.Analysis.Analyzer)
+	}
+	if getResp.Analysis.Summary != "Model flagged rollout-sensitive auth change." {
+		t.Fatalf("analysis summary = %q, want model-derived summary", getResp.Analysis.Summary)
+	}
+	if getResp.Analysis.Confidence != 0.91 {
+		t.Fatalf("analysis confidence = %v, want 0.91", getResp.Analysis.Confidence)
+	}
+	if !getResp.Analysis.RequiresHumanReview {
+		t.Fatal("analysis requires_human_review = false, want true")
+	}
+	if len(getResp.Analysis.Rationale) != 1 || getResp.Analysis.Rationale[0] != "auth path touches production gateway" {
+		t.Fatalf("analysis rationale = %+v, want analyzer rationale", getResp.Analysis.Rationale)
+	}
+	if len(getResp.Analysis.SuggestedSignals) != 1 {
+		t.Fatalf("analysis suggested_signals = %+v, want 1 signal", getResp.Analysis.SuggestedSignals)
+	}
+	if getResp.Analysis.SuggestedSignals[0].SignalName != "llm_gateway_auth_regression" {
+		t.Fatalf("analysis suggested_signal_name = %s, want llm_gateway_auth_regression", getResp.Analysis.SuggestedSignals[0].SignalName)
 	}
 }
 

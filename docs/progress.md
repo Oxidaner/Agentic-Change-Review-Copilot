@@ -38,11 +38,6 @@ Current reusable pieces:
 - post-release evaluation feedback and aggregate review metrics
 - GitHub PR webhook ingestion with optional HMAC signature verification
 
-Secondary reusable pieces kept in-tree:
-
-- `internal/testflow` workflow runtime exploration
-- live HTTP runner and artifact-oriented execution patterns that may later feed review evidence collection
-
 ## Final Product Direction
 
 The final product direction is fixed as one clear main line:
@@ -73,11 +68,6 @@ Contract and schema:
 
 - `openapi/openapi.yaml`
 - `migrations/*.sql`
-
-Reference implementation and exploration:
-
-- `internal/testflow/*`
-- `cmd/testflow-cli/main.go`
 
 ## What Is Done Against The Acceptance Goal
 
@@ -120,7 +110,7 @@ Second priority:
 
 1. enrich evaluation ingestion so feedback can tune rules and prompts over time
 2. add more source adapters for SQL and K8s native change inputs
-3. decide how much of `internal/testflow` should be folded back into the review runtime versus archived
+3. harden the review runtime around checkpointing, observability, and operator controls
 
 ## Resume Checklist
 

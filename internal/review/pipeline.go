@@ -410,6 +410,14 @@ func hybridAnalysisEvidenceItem(analysis HybridAnalysis, nextID func(string) str
 	if analysis.Mode == "" && analysis.Summary == "" && len(analysis.Rationale) == 0 {
 		return nil
 	}
+	suggestedSignals := make([]map[string]any, 0, len(analysis.SuggestedSignals))
+	for _, signal := range analysis.SuggestedSignals {
+		suggestedSignals = append(suggestedSignals, compactMetadataMap(map[string]any{
+			"signal_name": signal.SignalName,
+			"severity":    string(signal.Severity),
+			"explanation": signal.Explanation,
+		}))
+	}
 	return []EvidenceItem{
 		{
 			EvidenceID:     nextID("ev"),
@@ -423,6 +431,7 @@ func hybridAnalysisEvidenceItem(analysis HybridAnalysis, nextID func(string) str
 				"analyzer":              analysis.Analyzer,
 				"requires_human_review": boolString(analysis.RequiresHumanReview),
 				"rationale":             analysis.Rationale,
+				"suggested_signals":     suggestedSignals,
 			},
 		},
 	}

@@ -14,11 +14,11 @@ import (
 // main wires together the HTTP layer and the selected persistence implementation.
 //
 // The binary intentionally stays thin: all business behavior lives under
-// internal/testflow and internal/api so the service can be tested without
+// internal/review and internal/api so the service can be tested without
 // starting a real HTTP server.
 func main() {
 	store := mustBuildStore()
-	service := review.NewService(store)
+	service := review.NewService(store, review.WithAnalyzerFromConfig())
 	handler := api.NewReviewHandler(service, api.WithReviewGitHubWebhookSecret(os.Getenv("GITHUB_WEBHOOK_SECRET")))
 
 	addr := ":" + envOrDefault("PORT", "8080")

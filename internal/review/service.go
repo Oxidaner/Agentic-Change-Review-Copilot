@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -44,6 +46,53 @@ func NewService(store Store, options ...ServiceOption) *Service {
 		}
 	}
 	return service
+}
+
+// WithAnalyzerFromConfig opts into cwd-based config loading for the analyzer.
+func WithAnalyzerFromConfig() ServiceOption {
+	return func(service *Service) {
+		if analyzer := loadAnalyzerFromConfig(defaultAgentConfigPaths()); analyzer != nil {
+			service.analyzer = analyzer
+		}
+	}
+}
+
+func loadAnalyzerFromConfig(publicPath, localPath string) ChangeAnalyzer {
+	cfg, err := LoadAgentConfig(publicPath, localPath)
+	if err != nil {
+		return HeuristicAnalyzer{}
+	}
+
+	validated, err := validateAgentConfig(cfg)
+	if err != nil || !validated.Enabled {
+		return HeuristicAnalyzer{}
+	}
+
+	runtime := NewAgentRuntime(validated, NewChatCompletionsClient(validated))
+	return newAgentAnalyzer(runtime, HeuristicAnalyzer{})
+}
+
+func defaultAgentConfigPaths() (string, string) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "config/review-agent.json", "config/review-agent.local.json"
+	}
+
+	dir := wd
+	for {
+		publicPath := filepath.Join(dir, "config", "review-agent.json")
+		if _, err := os.Stat(publicPath); err == nil {
+			return publicPath, filepath.Join(dir, "config", "review-agent.local.json")
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return filepath.Join(wd, "config", "review-agent.json"), filepath.Join(wd, "config", "review-agent.local.json")
 }
 
 // CreateReview accepts a new review request, applies idempotency, runs the
@@ -513,9 +562,55 @@ func analysisForRecord(record Record) HybridAnalysis {
 			Confidence:          item.Confidence,
 			RequiresHumanReview: metadataString(item.Metadata, "requires_human_review") == "true",
 			Rationale:           metadataStringSlice(item.Metadata, "rationale"),
+			SuggestedSignals:    suggestedSignalsFromMetadata(item.Metadata, "suggested_signals"),
 		}
 	}
 	return HybridAnalysis{}
+}
+
+func suggestedSignalsFromMetadata(metadata map[string]any, key string) []SuggestedRiskSignal {
+	if metadata == nil {
+		return nil
+	}
+
+	raw, ok := metadata[key]
+	if !ok {
+		return nil
+	}
+
+	var items []any
+	switch typed := raw.(type) {
+	case []any:
+		items = typed
+	case []map[string]any:
+		items = make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
+		return nil
+	}
+
+	signals := make([]SuggestedRiskSignal, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		signalName := metadataString(payload, "signal_name")
+		if signalName == "" {
+			continue
+		}
+
+		signals = append(signals, SuggestedRiskSignal{
+			SignalName:  signalName,
+			Severity:    RiskLevel(metadataString(payload, "severity")),
+			Explanation: metadataString(payload, "explanation"),
+		})
+	}
+
+	return dedupeSuggestedSignals(signals)
 }
 
 // confidenceFor returns the heuristic confidence attached to a risk level.

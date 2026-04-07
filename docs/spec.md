@@ -1,33 +1,34 @@
-# Workflow Agent AI Test Platform Spec
+# Agentic Change Review Copilot Spec
 
 ## 1. Goal And Boundary
 
 ### 1.1 Goal
-- Turn engineering changes into a controlled AI-driven automated testing workflow.
-- Extract test points from PRs or requirement changes.
-- Generate executable test cases.
-- Run tools in a structured workflow.
-- Perform intelligent assertions on execution results.
-- Analyze failures and generate structured test reports.
+- Turn engineering changes into a controlled AI-driven change-risk audit workflow.
+- Accept PR, SQL, and K8s configuration changes as review inputs.
+- Combine rule prefiltering and LLM analysis to identify risk, collect evidence, and produce audit decisions.
+- Support human intervention, checkpoint / resume, and audit trace persistence.
+- Use external tools to enrich review context and improve release decisions.
 
 ### 1.2 Non-Goal
 - Do not build a generic autonomous agent.
-- Do not replace every testing platform capability in the MVP.
-- Do not try to cover every test type in the first phase.
+- Do not build a generic testing platform in the MVP.
+- Do not optimize for free-form chat as the primary interface.
+- Do not try to cover every external system integration in the first phase.
 - Do not optimize for chat interaction as the primary interface.
 
 ### 1.3 Core Principle
 - Workflow first.
-- Tool execution first.
+- Evidence first.
+- Hybrid `rules + LLM` analysis first.
+- Human-in-the-loop first.
 - Structured output first.
-- Failure attribution first.
 - Feedback loop first.
 
 ## 2. Main Line
 
 The project boundary is now fixed to one clear path:
 
-`PR / requirement change -> test point extraction -> test case generation -> tool execution -> smart assertion -> failure analysis -> test report`
+`PR / SQL / K8s change -> change normalization -> context collection -> risk signal extraction -> scoring / hybrid analysis -> recommendation -> human decision -> evaluation feedback`
 
 This is the only main line the MVP should optimize for.
 
@@ -35,12 +36,11 @@ This is the only main line the MVP should optimize for.
 
 ### 3.1 Runtime / Orchestration Layer
 Responsibilities:
-- receive tasks
-- manage workflow states
-- call tools
-- handle timeout and retry
-- support human intervention
-- persist trace and execution records
+- receive review requests
+- manage workflow states and checkpoints
+- coordinate rule engines, model analysis, and external tools
+- handle retry, resume, and manual intervention
+- persist audit traces and operator decisions
 
 Target abstractions:
 - `Workflow`
@@ -49,93 +49,88 @@ Target abstractions:
 - `Tool`
 - `ToolResult`
 - `ModelAdapter`
-- `TestTask`
+- `Review`
 - `TraceEvent`
 
 ### 3.2 AI Capability Layer
 Responsibilities:
-- parse engineering changes
-- extract test points
-- generate test cases
-- suggest test data
-- perform smart assertions
-- analyze failures
-- generate reports
+- normalize engineering changes
+- extract risk signals
+- organize supporting evidence
+- run hybrid analysis
+- generate release recommendation and rollback guidance
+- summarize audit rationale
 
 Suggested modules:
 - `change_parser`
-- `test_point_extractor`
-- `test_case_generator`
-- `test_data_planner`
-- `assertion_engine`
-- `failure_analyzer`
-- `report_generator`
+- `risk_signal_extractor`
+- `context_collector`
+- `hybrid_analyzer`
+- `recommendation_engine`
+- `rollback_planner`
+- `evaluation_recorder`
 
 ### 3.3 Scenario Layer
 Responsibilities:
-- bind the runtime and AI capability layers to concrete testing scenarios
+- bind the runtime and AI capability layers to concrete change-audit scenarios
 
 Phase 1 priority:
-- API regression testing
-- Web UI core-path testing
+- PR-driven release review
+- SQL change audit
+- K8s configuration audit
 
 ## 4. Core Workflow
 
-1. Accept PR diff or requirement change.
-2. Parse the change.
-3. Extract test points.
-4. Generate structured test cases.
-5. Choose tool execution plan.
-6. Execute tools.
-7. Collect logs, traces, screenshots, and artifacts.
-8. Perform intelligent assertions.
-9. Run failure attribution.
-10. Generate structured test report.
+1. Accept PR, SQL, or K8s change input.
+2. Normalize the change into a shared review bundle.
+3. Collect context from Git, CMDB, Metrics, Runbook, and attached metadata.
+4. Run rule-based risk signal extraction.
+5. Run hybrid analysis with heuristic and LLM-capable stages.
+6. Score the change and generate recommendation output.
+7. Produce rollback guidance and observability checks.
+8. Persist audit trace and expose human review / override actions.
+9. Record release outcome feedback and aggregate evaluation metrics.
 
 ## 5. Key Modules
 
 ### 5.1 Change Input Layer
-Normalizes PR diff or requirement change input into a shared input object.
+Normalizes PR, SQL, and K8s inputs into a shared review object.
 
-### 5.2 Test Point Extractor
-Produces structured test points from engineering changes.
+### 5.2 Context Collection Layer
+Fetches or accepts Git, CMDB, metrics, runbook, and other review evidence.
 
-### 5.3 Test Case Generator
-Produces executable or near-executable test case descriptions.
+### 5.3 Risk Signal Extractor
+Produces structured risk signals from change content and surrounding context.
 
-### 5.4 Tool Execution Layer
-Executes tools such as:
-- `api_test_runner`
-- `ui_test_runner`
-- `mock_data_loader`
-- `log_query`
-- `trace_query`
-- `artifact_collector`
+### 5.4 Hybrid Analysis Layer
+Combines rule prefiltering and model analysis into a coherent audit result.
 
-### 5.5 Smart Assertion Layer
-Determines whether execution output satisfies expectations.
+### 5.5 Recommendation And Rollback Layer
+Produces review recommendation, rollback guidance, and release window notes.
 
-### 5.6 Failure Analyzer
-Determines likely failure type, root cause, evidence, and next action.
+### 5.6 Human Decision Layer
+Captures approve / reject / override decisions and keeps them in the audit trail.
 
-### 5.7 Report Generator
-Produces JSON or Markdown test report outputs.
+### 5.7 Evaluation Layer
+Captures release outcomes and aggregate metrics for rule / prompt iteration.
 
 ## 6. Core Data Models
 
-- `ChangeInput`
-- `TestPoint`
-- `TestCase`
-- `ExecutionPlan`
-- `ExecutionResult`
-- `AssertionResult`
-- `FailureAnalysis`
-- `TestReport`
+- `CreateReviewRequest`
+- `Review`
+- `ChangeBundle`
+- `RiskSignal`
+- `HybridAnalysis`
+- `Recommendation`
+- `RollbackPlan`
+- `EvidenceItem`
+- `TimelineEvent`
+- `EvaluationMetrics`
 - `TraceEvent`
 
 ## 7. Current Repository Status
 
-The repository currently contains a reusable backend skeleton from the previous review-oriented MVP.
+The repository currently contains an active review-oriented MVP.
 
 What can be reused:
 - HTTP API skeleton
@@ -145,27 +140,27 @@ What can be reused:
 - OpenAPI-first contract workflow
 - Docker startup and basic tests
 
-What still needs migration:
-- domain naming
-- workflow states
-- API contract
-- persistence object semantics
-- actual testing tool integrations
+What still needs hardening:
+- real LLM adapter wiring
+- richer external tool integrations
+- explicit checkpoint / resume semantics
+- measurable feedback loop proving review efficiency gains
 
 ## 8. Immediate Next Steps
 
-1. Rewrite OpenAPI around the test automation workflow.
-2. Rename domain objects from review semantics to test-task semantics.
-3. Keep the first executable scenario narrow: API regression workflow.
-4. Add PostgreSQL integration tests after the domain migration.
+1. add a real LLM-backed analysis stage on top of the current heuristic pipeline
+2. replace metadata-only external context with real adapters for Git, Metrics, CMDB, and Runbook retrieval
+3. add checkpoint / resume support at workflow-stage granularity
+4. establish outcome-based evaluation proving the workflow reduces audit time in core scenarios
 
 ## 9. MVP Success Criteria
 
 The MVP is successful if it can show:
 - controlled workflow execution
-- test point extraction from change input
-- generated test cases
-- real tool execution
-- intelligent assertion results
-- failure attribution
-- structured test report output
+- rule prefiltering plus LLM analysis for risk identification and evidence organization
+- multi-stage workflow scheduling with audit trace persistence
+- checkpoint recovery and human intervention support
+- integration with Git, CMDB, Metrics, and Runbook-style context sources
+- recommendation and rollback output for release-review decisions
+- outcome feedback that supports rule / prompt iteration
+- measurable audit-time reduction in core scenarios

@@ -1,7 +1,11 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -67,4 +71,33 @@ func (h *ReviewHandler) githubPullRequestWebhook(w http.ResponseWriter, r *http.
 		Status:   resp.Status,
 		PollURL:  resp.PollURL,
 	})
+}
+
+func verifyGitHubWebhookSignature(secret string, body []byte, signatureHeader string) error {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return nil
+	}
+
+	signatureHeader = strings.TrimSpace(signatureHeader)
+	if signatureHeader == "" {
+		return errors.New("missing X-Hub-Signature-256 header")
+	}
+
+	const prefix = "sha256="
+	if len(signatureHeader) <= len(prefix) || !strings.EqualFold(signatureHeader[:len(prefix)], prefix) {
+		return errors.New("invalid X-Hub-Signature-256 format")
+	}
+
+	signature, err := hex.DecodeString(signatureHeader[len(prefix):])
+	if err != nil {
+		return errors.New("invalid X-Hub-Signature-256 format")
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return errors.New("invalid X-Hub-Signature-256 signature")
+	}
+	return nil
 }

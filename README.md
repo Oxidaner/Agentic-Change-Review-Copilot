@@ -31,14 +31,12 @@ The current review pipeline is still mostly heuristic, but it already supports:
 
 - normalized change bundles for PR-style inputs
 - rule-based risk signal extraction across PR, SQL, K8s, gateway, and production-change patterns
-- a pluggable hybrid-analysis stage with a default heuristic fallback analyzer and future LLM integration seam
+- a pluggable hybrid-analysis stage with an explicit OpenAI-compatible tool-calling agent path and heuristic fallback
 - structured evidence packing
 - human-review gating for high-risk or low-confidence decisions
 - recommendation and rollback-plan generation
 - audit timeline persistence
 - basic feedback metrics such as override rate and false-positive rate
-
-The repository still contains the newer `testflow` exploration under `internal/testflow`, but the active HTTP entrypoint is now the review domain again.
 
 ## API
 
@@ -72,6 +70,13 @@ Key environment variables:
 - `DATABASE_URL`: when set, the service uses PostgreSQL instead of the in-memory store
 - `AUTO_MIGRATE=1`: runs `migrations/*.up.sql` on startup
 - `GITHUB_WEBHOOK_SECRET`: when set, the GitHub webhook endpoint requires a valid `X-Hub-Signature-256` HMAC signature
+
+Analyzer config files:
+
+- `config/review-agent.json`: tracked base analyzer config checked into the repo
+- `config/review-agent.local.json`: optional local override for secrets such as `api_key`
+
+The `review-api` binary now opts into config-driven analyzer loading explicitly with `review.WithAnalyzerFromConfig()`. If the config files are missing, invalid, disabled, or the runtime analyzer call fails, the review pipeline falls back to the built-in heuristic analyzer so review creation and GET responses still succeed.
 
 ## Example Review Request
 
@@ -153,6 +158,5 @@ go build ./...
 ## Notes
 
 - `internal/review` is the active product surface.
-- `internal/testflow` remains in-tree as a secondary exploration and reusable workflow runtime reference.
 - External context metadata attached to evidence is allowlisted before persistence to avoid leaking secrets or internal-only payloads.
-- The `analysis` field in review responses is currently backed by the new hybrid-analysis skeleton and is ready for a future real LLM adapter.
+- The `analysis` field in review responses includes hybrid-analysis output from the configured analyzer when explicit config opt-in succeeds; otherwise it is populated by the heuristic fallback path.
